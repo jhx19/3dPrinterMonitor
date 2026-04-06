@@ -1,7 +1,7 @@
 # GIX Lab 3D Printer Efficiency Platform
 
 **Proposer:** Su Hyun Jung
-**Developer:** Jasin Jin
+**Developer:** Jason Jin
 **Agreed Development Fee:** [TBD] GIX Bucks
 **Stack:** Next.js + Supabase
 
