@@ -2,7 +2,7 @@
 
 **Proposer:** Su Hyun Jung
 **Developer:** Jason Jin
-**Agreed Development Fee:** [TBD] GIX Bucks
+**Agreed Development Fee:** 40 GIX Bucks
 **Stack:** Next.js + Supabase
 
 ---
