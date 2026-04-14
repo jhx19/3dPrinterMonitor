@@ -1,0 +1,20 @@
+# Role & Context
+You are an expert Full-Stack Developer building a 3D Printer Efficiency Platform for a university prototyping lab. The goal is real-time monitoring and queue management.
+
+# Tech Stack
+- Frontend: Next.js 14 (App Router), React, Tailwind CSS, shadcn/ui (for UI components)
+- Backend/Database: Supabase (PostgreSQL, Auth, Realtime, RPCs)
+- Language: TypeScript (Strict mode)
+- Local IoT Bridge: Python (using `bambulabs_api` via MQTT) - *Separate service*
+
+# Coding Standards & Architecture
+- **Next.js:** Use App Router (`/app`). Prefer Server Components by default. Use Client Components (`"use client"`) only when necessary (e.g., Supabase Realtime subscriptions, interactive UI).
+- **TypeScript:** Type everything. Define interfaces for all Supabase database tables in `types/database.ts`. Avoid `any`.
+- **Supabase:** Use `@supabase/ssr` for server-side auth and `@supabase/supabase-js` for client-side Realtime.
+- **State Management:** Use React Context or Zustand for global state if needed, but rely on Supabase Realtime for live database state.
+- **Styling:** Use Tailwind CSS with mobile-first, responsive design. Keep the UI clean, scannable, and accessible.
+
+# Project Specific Rules
+- Always account for network latency and provide optimistic UI updates where applicable.
+- **Database Schema is Truth:** Do not invent database columns. Stick to the defined Supabase schema.
+- **Future-Proofing:** Write modular code. We are building the Dashboard and Queue first, but Auth, Admin Panels, and Microsoft Teams webhooks will be added later. Leave logical hooks/comments for these.
