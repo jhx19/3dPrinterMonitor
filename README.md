@@ -72,3 +72,44 @@ A real-time dashboard and queue system that:
 - Remote print job initiation
 - Time-slot reservation system
 - Mobile app
+
+
+---
+
+## Engineering Log & Implementation Notes
+
+### 1. Database Constraints & Queue Integrity
+To enforce the requirement that a student cannot join the same printer queue more than once simultaneously, we implemented a `UNIQUE` constraint in the PostgreSQL schema:
+- **Constraint**: `UNIQUE(printer_id, user_id, status)`
+- **Logic**: This prevents duplicate rows where a user is already in a 'waiting' state for a specific machine. It offloads the validation logic to the database layer, ensuring data integrity even if frontend checks are bypassed.
+
+### 2. Realtime Scalability: Supabase Realtime vs. Polling
+The system utilizes **Supabase Realtime** (via Postgres CDC) instead of traditional HTTP polling.
+- **UX**: Provides sub-second UI updates when printer telemetry or queue positions change, which is critical for the "arrival window" logic.
+- **Efficiency**: Reduces unnecessary server load and bandwidth by pushing updates only when data actually changes, rather than requesting data on a fixed interval (e.g., every 5-10 seconds).
+
+### 3. Mock Data Strategy for Rapid Prototyping
+To decouple the development of the **Real-time Dashboard** (Issue 2) and **Queue System** (Issue 4) from **Authentication** (Issue 3), we utilized a `MOCK_USER_ID`:
+- **Current User**: `00000000-0000-0000-0000-000000000000`
+- **Purpose**: This allowed for end-to-end testing of the queue join/leave logic and Realtime UI feedback loops before the UW Email login system was fully integrated.
+
+---
+
+## Current Stage Testing (Manual Verification)
+
+To verify the current implementation of Issues 2 and 4, follow these steps:
+
+### 1. Local Setup
+1. Ensure `.env.local` contains valid `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+2. Run `npm install` and `npm run dev`.
+3. Open `http://localhost:3000/dashboard`.
+
+### 2. Dashboard Real-time Test
+1. Open your **Supabase Table Editor** for the `printers` table.
+2. Manually change the `status` of a printer (e.g., from `idle` to `printing`).
+3. **Expected**: The dashboard UI should reflect the change (badge color and icon) instantly without a page refresh.
+
+### 3. Queue Logic Test
+1. Click the **"Join Queue"** button on any printer card.
+2. **Expected**: The button should change to "Already in Queue" and be disabled. A new entry should appear in the `queues` table in Supabase.
+3. Manually add more entries to the `queues` table for the same `printer_id` in Supabase to test the split between **Active Slots** and **Secondary Waitlist**.
