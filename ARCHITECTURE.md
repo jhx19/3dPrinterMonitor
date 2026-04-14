@@ -3,7 +3,7 @@
 
 **Project:** TECHIN 510 Final Project  
 **Client:** Su Hyun Jung  
-**Developer:** [Your Name]  
+**Developer:** Jason Jin  
 **Date:** 2026-04-06
 
 ---
