@@ -48,7 +48,7 @@ A real-time dashboard and queue system that:
 
 | Check-in | Date | Required Progress | Status |
 |----------|------|-------------------|--------|
-| Check-in 1 | April 20, 2026 | Architecture PR submitted and approved. Bambu Lab API connected to at least 1 printer. Basic dashboard UI showing live printer status. Auth (UW email login) working. | Partial. Dashboard UI and queue structure complete. Supabase Realtime working. Bambu API not yet connected (Time Remaining shows Unknown). Auth not yet integrated (mock user only). Bug reports filed: #[1], #[2]. |
+| Check-in 1 | April 20, 2026 | Architecture PR submitted and approved. Bambu Lab API connected to at least 1 printer. Basic dashboard UI showing live printer status. Auth (UW email login) working. | Partial. Dashboard UI and queue structure complete. Supabase Realtime working. Bambu API not yet connected (Time Remaining shows Unknown). Auth not yet integrated (mock user only). Bug reports filed: [#13](https://github.com/GIX-Luyao/final-project-codebase-junction-su/issues/13), #[2]. |
 | Check-in 2 | May 4, 2026 | Queue system fully functional. Teams notifications firing correctly for all roles. No-show detection and strike recording working. | In progress. |
 | Check-in 3 | May 18, 2026 | TA admin panel complete. Penalty management working. All Must-have issues closed. AI prediction in progress or complete. | Not started. |
 | Final Delivery | June 1, 2026 | All features complete and tested. Acceptance criteria met for all Must-have issues. App deployed and demo-ready. | Not started. |
