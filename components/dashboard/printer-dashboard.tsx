@@ -1,18 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, RefreshCw } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { AlertCircle, RefreshCw, Timer } from "lucide-react";
+import type { User } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/types/database";
 import { PrinterGrid } from "@/components/dashboard/printer-grid";
 import type { PrinterStatus, QueueWaiter } from "@/components/dashboard/printer-card";
 
-const MOCK_USER_ID = "00000000-0000-0000-0000-000000000000";
-
 type PrinterRow = Database["public"]["Tables"]["printers"]["Row"];
 type QueueRow = Database["public"]["Tables"]["queues"]["Row"];
-type QueueInsert = Database["public"]["Tables"]["queues"]["Insert"];
+type Profile = Database["public"]["Tables"]["profiles"]["Row"];
 
 interface PrinterViewModel {
   id: string;
@@ -22,113 +22,29 @@ interface PrinterViewModel {
   filamentLevel: number | null;
 }
 
-function toStringOrNull(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-function toNumberOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function getFirstString(row: Record<string, unknown>, keys: string[]) {
-  for (const key of keys) {
-    const value = toStringOrNull(row[key]);
-    if (value !== null) {
-      return value;
-    }
-  }
-  return null;
-}
-
-function getFirstNumber(row: Record<string, unknown>, keys: string[]) {
-  for (const key of keys) {
-    const value = toNumberOrNull(row[key]);
-    if (value !== null) {
-      return value;
-    }
-  }
-  return null;
-}
-
-function normalizeStatus(rawStatus: string | null): PrinterStatus {
-  switch (rawStatus?.toLowerCase()) {
-    case "printing":
-      return "printing";
-    case "error":
-      return "error";
-    default:
-      return "idle";
-  }
-}
-
-function mapPrinter(row: PrinterRow): PrinterViewModel {
-  const record = row as Record<string, unknown>;
-  const id =
-    getFirstString(record, ["id", "printer_id", "uuid"]) ??
-    getFirstString(record, ["name", "printer_name"]) ??
-    crypto.randomUUID();
-  const name = getFirstString(record, ["name", "printer_name"]) ?? "Unknown Printer";
-  const status = normalizeStatus(getFirstString(record, ["status", "printer_status"]));
-  const timeRemainingMinutes = getFirstNumber(record, [
-    "time_remaining",
-    "time_remaining_minutes",
-    "remaining_minutes",
-    "eta_minutes",
-  ]);
-  const filamentLevel = getFirstNumber(record, [
-    "filament_level",
-    "filament_percent",
-    "filament",
-  ]);
-
-  return { id, name, status, timeRemainingMinutes, filamentLevel };
-}
-
-function getQueuePrinterRef(row: QueueRow): string | null {
-  const record = row as Record<string, unknown>;
-  return getFirstString(record, [
-    "printer_id",
-    "printer_name",
-    "printer",
-    "machine_name",
-    "printer_uuid",
-  ]);
-}
-
-function mapQueueWaiter(row: QueueRow): QueueWaiter | null {
-  const record = row as Record<string, unknown>;
-  const id = getFirstString(record, ["id"]) ?? crypto.randomUUID();
-  const userId = getFirstString(record, ["user_id", "profile_id"]);
-  if (!userId) {
-    return null;
-  }
-  const createdAt = getFirstString(record, ["created_at", "queued_at", "joined_at"]);
-
-  return { id, userId, createdAt };
-}
-
-function sortQueue(waiters: QueueWaiter[]) {
-  return [...waiters].sort((a, b) => {
-    const timeA = a.createdAt ? Date.parse(a.createdAt) : Number.MAX_SAFE_INTEGER;
-    const timeB = b.createdAt ? Date.parse(b.createdAt) : Number.MAX_SAFE_INTEGER;
-    if (timeA === timeB) {
-      return a.id.localeCompare(b.id);
-    }
-    return timeA - timeB;
-  });
+function normalizeStatus(raw: string): PrinterStatus {
+  if (raw === "printing") return "printing";
+  if (raw === "error") return "error";
+  return "idle";
 }
 
 export function PrinterDashboard() {
   const supabase = useMemo(() => createClient(), []);
+  const router = useRouter();
+
   const [printers, setPrinters] = useState<PrinterViewModel[]>([]);
   const [queues, setQueues] = useState<QueueRow[]>([]);
+  const [profileNames, setProfileNames] = useState<Map<string, string>>(new Map());
+  const [currentUser, setCurrentUser] = useState<User | null | "loading">("loading");
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [joiningPrinterIds, setJoiningPrinterIds] = useState<Record<string, boolean>>({});
+  const [joiningIds, setJoiningIds] = useState<Record<string, boolean>>({});
+  const [leavingIds, setLeavingIds] = useState<Record<string, boolean>>({});
+  const [startingIds, setStartingIds] = useState<Record<string, boolean>>({});
 
   const loadData = useCallback(async () => {
     setErrorMessage(null);
-
     const [printerResult, queueResult] = await Promise.all([
       supabase.from("printers").select("*").order("name", { ascending: true }),
       supabase.from("queues").select("*"),
@@ -139,22 +55,66 @@ export function PrinterDashboard() {
       setIsLoading(false);
       return;
     }
-
     if (queueResult.error) {
       setErrorMessage(`Failed to load queues: ${queueResult.error.message}`);
       setIsLoading(false);
       return;
     }
 
-    setPrinters((printerResult.data ?? []).map(mapPrinter));
-    setQueues(queueResult.data ?? []);
+    setPrinters(
+      (printerResult.data ?? []).map((row) => ({
+        id: row.id,
+        name: row.name,
+        status: normalizeStatus(row.status),
+        timeRemainingMinutes: row.time_remaining,
+        filamentLevel: row.filament_level,
+      })),
+    );
+
+    const queueData = queueResult.data ?? [];
+    setQueues(queueData);
+
+    const userIds = [...new Set(queueData.map((q) => q.user_id))];
+    if (userIds.length > 0) {
+      const { data: profileData } = await supabase
+        .from("profiles")
+        .select("id, full_name")
+        .in("id", userIds);
+      const names = new Map<string, string>();
+      for (const p of profileData ?? []) {
+        if (p.full_name) names.set(p.id, p.full_name);
+      }
+      setProfileNames(names);
+    } else {
+      setProfileNames(new Map());
+    }
+
     setIsLoading(false);
   }, [supabase]);
 
   useEffect(() => {
-    const initialLoadTimer = window.setTimeout(() => {
-      void loadData();
-    }, 0);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        const user = session?.user ?? null;
+        setCurrentUser(user);
+        if (user) {
+          void supabase
+            .from("profiles")
+            .select("*")
+            .eq("id", user.id)
+            .single()
+            .then(({ data }) => setProfile(data));
+          void loadData();
+        } else {
+          setProfile(null);
+        }
+      },
+    );
+    return () => subscription.unsubscribe();
+  }, [supabase, loadData]);
+
+  useEffect(() => {
+    void loadData();
 
     const printerChannel = supabase
       .channel("printers-realtime")
@@ -171,7 +131,6 @@ export function PrinterDashboard() {
       .subscribe();
 
     return () => {
-      window.clearTimeout(initialLoadTimer);
       void supabase.removeChannel(printerChannel);
       void supabase.removeChannel(queueChannel);
     };
@@ -179,83 +138,107 @@ export function PrinterDashboard() {
 
   const waitersByPrinter = useMemo(() => {
     const map = new Map<string, QueueWaiter[]>();
+    const userId = currentUser === "loading" ? null : currentUser?.id ?? null;
 
     for (const printer of printers) {
-      const waiters = queues
-        .filter((queueRow) => {
-          const queuePrinterRef = getQueuePrinterRef(queueRow);
-          return queuePrinterRef === printer.id || queuePrinterRef === printer.name;
+      const waiters: QueueWaiter[] = queues
+        .filter((q) => q.printer_id === printer.id)
+        .map((q) => {
+          const name =
+            q.user_id === userId
+              ? (profileNames.get(q.user_id) ?? "You")
+              : (profileNames.get(q.user_id) ?? `User …${q.user_id.slice(-6).toUpperCase()}`);
+          return {
+            id: q.id,
+            userId: q.user_id,
+            displayName: name,
+            createdAt: q.created_at,
+            notifiedAt: q.notified_at ?? null,
+            startedAt: q.started_at ?? null,
+          };
         })
-        .map(mapQueueWaiter)
-        .filter((waiter): waiter is QueueWaiter => waiter !== null);
-
-      map.set(printer.id, sortQueue(waiters));
+        .sort((a, b) => {
+          const ta = a.createdAt ? Date.parse(a.createdAt) : Number.MAX_SAFE_INTEGER;
+          const tb = b.createdAt ? Date.parse(b.createdAt) : Number.MAX_SAFE_INTEGER;
+          return ta === tb ? a.id.localeCompare(b.id) : ta - tb;
+        });
+      map.set(printer.id, waiters);
     }
-
     return map;
-  }, [printers, queues]);
+  }, [printers, queues, currentUser, profileNames]);
 
   const joinQueue = useCallback(
     async (printer: PrinterViewModel) => {
-      const existingWaiters = waitersByPrinter.get(printer.id) ?? [];
-      const alreadyQueued = existingWaiters.some((waiter) => waiter.userId === MOCK_USER_ID);
-      if (alreadyQueued) {
+      if (currentUser === "loading" || !currentUser) {
+        router.push("/login?next=/dashboard");
         return;
       }
-
-      setJoiningPrinterIds((previous) => ({ ...previous, [printer.id]: true }));
+      setJoiningIds((prev) => ({ ...prev, [printer.id]: true }));
       setErrorMessage(null);
-
-      const insertPayloadCandidates: QueueInsert[] = [
-        { printer_id: printer.id, user_id: MOCK_USER_ID },
-        { printer_name: printer.name, user_id: MOCK_USER_ID },
-        { printer: printer.name, user_id: MOCK_USER_ID },
-        { machine_name: printer.name, user_id: MOCK_USER_ID },
-      ];
-
-      let insertError: string | null = null;
-      for (const payload of insertPayloadCandidates) {
-        const { error } = await supabase.from("queues").insert(payload);
-        if (!error) {
-          setQueues((previous) => [
-            ...previous,
-            {
-              id: crypto.randomUUID(),
-              user_id: MOCK_USER_ID,
-              printer_id: String(
-                payload.printer_id ??
-                  payload["printer_name"] ??
-                  payload["printer"] ??
-                  payload["machine_name"] ??
-                  printer.name,
-              ),
-              created_at: new Date().toISOString(),
-            } as QueueRow,
-          ]);
-          setJoiningPrinterIds((previous) => ({ ...previous, [printer.id]: false }));
-          return;
-        }
-
-        if (error.message.toLowerCase().includes("duplicate")) {
-          insertError = "You are already in this queue.";
-          break;
-        }
-
-        insertError = error.message;
+      const { error } = await supabase
+        .from("queues")
+        .insert({ printer_id: printer.id, user_id: currentUser.id });
+      if (error && !error.message.toLowerCase().includes("duplicate")) {
+        setErrorMessage(error.message);
       }
-
-      setErrorMessage(insertError ?? "Unable to join queue.");
-      setJoiningPrinterIds((previous) => ({ ...previous, [printer.id]: false }));
+      setJoiningIds((prev) => ({ ...prev, [printer.id]: false }));
     },
-    [supabase, waitersByPrinter],
+    [supabase, currentUser, router],
   );
+
+  const leaveQueue = useCallback(
+    async (printer: PrinterViewModel) => {
+      if (currentUser === "loading" || !currentUser) return;
+      const entry = queues.find(
+        (q) => q.printer_id === printer.id && q.user_id === currentUser.id,
+      );
+      if (!entry) return;
+      setLeavingIds((prev) => ({ ...prev, [printer.id]: true }));
+      const { error } = await supabase.from("queues").delete().eq("id", entry.id);
+      if (error) setErrorMessage(error.message);
+      setLeavingIds((prev) => ({ ...prev, [printer.id]: false }));
+    },
+    [supabase, currentUser, queues],
+  );
+
+  const confirmStart = useCallback(
+    async (printer: PrinterViewModel) => {
+      if (currentUser === "loading" || !currentUser) return;
+      const entry = queues.find(
+        (q) => q.printer_id === printer.id && q.user_id === currentUser.id,
+      );
+      if (!entry) return;
+      setStartingIds((prev) => ({ ...prev, [printer.id]: true }));
+      const { error } = await supabase
+        .from("queues")
+        .update({ started_at: new Date().toISOString() })
+        .eq("id", entry.id);
+      if (error) setErrorMessage(error.message);
+      setStartingIds((prev) => ({ ...prev, [printer.id]: false }));
+    },
+    [supabase, currentUser, queues],
+  );
+
+  const myTurnPrinters = useMemo(() => {
+    const userId = currentUser === "loading" ? null : currentUser?.id ?? null;
+    if (!userId) return [];
+    return printers.filter((p) => {
+      const waiters = waitersByPrinter.get(p.id) ?? [];
+      const slot1 = waiters[0];
+      return (
+        slot1?.userId === userId &&
+        p.status === "idle" &&
+        slot1.startedAt === null
+      );
+    });
+  }, [printers, waitersByPrinter, currentUser]);
 
   if (isLoading) {
     return (
       <div className="flex min-h-[280px] items-center justify-center">
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <RefreshCw className="size-4 animate-spin" />
-          Loading printer dashboard...
+          Loading printer dashboard…
         </p>
       </div>
     );
@@ -284,29 +267,54 @@ export function PrinterDashboard() {
 
   if (printers.length === 0) {
     return (
-      <div className="rounded-lg border border-border p-6 text-sm text-muted-foreground">
-        No printers found. Seed the `printers` table to render this dashboard.
+      <div className="rounded-lg border border-dashed border-border p-6 text-sm text-muted-foreground">
+        No printers found. Run <code>supabase/schema.sql</code> to seed them.
       </div>
     );
   }
 
-  return (
-    <PrinterGrid
-      printers={printers.map((printer) => {
-        const waiters = waitersByPrinter.get(printer.id) ?? [];
-        const alreadyInQueue = waiters.some((waiter) => waiter.userId === MOCK_USER_ID);
+  const userId = currentUser === "loading" ? null : currentUser?.id ?? null;
+  const isBanned = profile?.is_banned ?? false;
 
-        return {
-          printerName: printer.name,
-          status: printer.status,
-          timeRemainingMinutes: printer.timeRemainingMinutes,
-          filamentLevel: printer.filamentLevel,
-          waiters,
-          isJoiningQueue: Boolean(joiningPrinterIds[printer.id]),
-          alreadyInQueue,
-          onJoinQueue: async () => joinQueue(printer),
-        };
-      })}
-    />
+  return (
+    <div className="space-y-4">
+      {myTurnPrinters.map((p) => (
+        <div
+          key={p.id}
+          className="flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+        >
+          <Timer className="size-5 shrink-0" />
+          <div>
+            <span className="font-semibold">{p.name} is ready for you!</span>
+            <span className="ml-2 text-xs">
+              Click &ldquo;I&apos;ve Started&rdquo; on the card within 10 minutes.
+            </span>
+          </div>
+        </div>
+      ))}
+
+      <PrinterGrid
+        printers={printers.map((printer) => {
+          const waiters = waitersByPrinter.get(printer.id) ?? [];
+          const alreadyInQueue = waiters.some((w) => w.userId === userId);
+          return {
+            printerName: printer.name,
+            status: printer.status,
+            timeRemainingMinutes: printer.timeRemainingMinutes,
+            filamentLevel: printer.filamentLevel,
+            waiters,
+            currentUserId: userId,
+            isJoiningQueue: Boolean(joiningIds[printer.id]),
+            isLeavingQueue: Boolean(leavingIds[printer.id]),
+            isStartingPrint: Boolean(startingIds[printer.id]),
+            alreadyInQueue,
+            isBanned,
+            onJoinQueue: async () => joinQueue(printer),
+            onLeaveQueue: async () => leaveQueue(printer),
+            onIveStarted: async () => confirmStart(printer),
+          };
+        })}
+      />
+    </div>
   );
 }
