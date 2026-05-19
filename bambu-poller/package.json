@@ -1,0 +1,14 @@
+{
+  "name": "bambu-poller",
+  "version": "1.0.0",
+  "description": "Reads live status from all 4 Bambu Lab X1C printers via MQTT and writes to Supabase",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.103.0",
+    "mqtt": "^5.10.4",
+    "nodemailer": "^6.9.14"
+  }
+}
