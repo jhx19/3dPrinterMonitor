@@ -32,6 +32,12 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# allow example files
+!.env.example
+!bambu-poller/.env.example
+# poller credentials (real values live only on the makerspace computer)
+bambu-poller/.env
+bambu-poller/node_modules
 
 # vercel
 .vercel

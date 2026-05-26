@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/types/database";
 import { PrinterGrid } from "@/components/dashboard/printer-grid";
 import type { PrinterStatus, QueueWaiter } from "@/components/dashboard/printer-card";
+import { normalizeStatus, sortQueueByTime } from "@/lib/printer-utils";
 
 type PrinterRow = Database["public"]["Tables"]["printers"]["Row"];
 type QueueRow = Database["public"]["Tables"]["queues"]["Row"];
@@ -20,12 +21,6 @@ interface PrinterViewModel {
   status: PrinterStatus;
   timeRemainingMinutes: number | null;
   filamentLevel: number | null;
-}
-
-function normalizeStatus(raw: string): PrinterStatus {
-  if (raw === "printing") return "printing";
-  if (raw === "error") return "error";
-  return "idle";
 }
 
 export function PrinterDashboard() {
@@ -157,12 +152,8 @@ export function PrinterDashboard() {
             startedAt: q.started_at ?? null,
           };
         })
-        .sort((a, b) => {
-          const ta = a.createdAt ? Date.parse(a.createdAt) : Number.MAX_SAFE_INTEGER;
-          const tb = b.createdAt ? Date.parse(b.createdAt) : Number.MAX_SAFE_INTEGER;
-          return ta === tb ? a.id.localeCompare(b.id) : ta - tb;
-        });
-      map.set(printer.id, waiters);
+      );
+      map.set(printer.id, sortQueueByTime(waiters));
     }
     return map;
   }, [printers, queues, currentUser, profileNames]);

@@ -70,27 +70,9 @@ const statusConfig: Record<
   },
 };
 
+import { formatCountdown, formatFilament, formatTime } from "@/lib/printer-utils";
+
 const NO_SHOW_MS = 10 * 60 * 1000;
-
-function formatTime(minutes: number | null) {
-  if (minutes === null || Number.isNaN(minutes)) return "—";
-  if (minutes <= 0) return "Ready";
-  const h = Math.floor(minutes / 60);
-  const m = Math.floor(minutes % 60);
-  return h === 0 ? `${m}m` : `${h}h ${m}m`;
-}
-
-function formatFilament(level: number | null) {
-  if (level === null || Number.isNaN(level)) return "—";
-  return `${Math.max(0, Math.min(100, Math.round(level)))}%`;
-}
-
-function formatCountdown(remainingMs: number): string {
-  const totalSec = Math.max(0, Math.ceil(remainingMs / 1000));
-  const min = Math.floor(totalSec / 60);
-  const sec = totalSec % 60;
-  return `${min}:${sec.toString().padStart(2, "0")}`;
-}
 
 export function PrinterCard({
   printerName,

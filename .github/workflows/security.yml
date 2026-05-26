@@ -1,0 +1,62 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so we can scan all commits
+
+      # Blocks merge if real credentials are found in tracked files
+      - name: Check for leaked secrets
+        run: |
+          echo "Scanning for leaked credentials..."
+
+          FAIL=0
+
+          # Supabase service role JWT (starts with eyJ, contains "service_role")
+          if git grep -rn '"service_role"' -- '*.ts' '*.tsx' '*.js' '*.json' 2>/dev/null | grep -v '.env.example'; then
+            echo "ERROR: Supabase service_role key found in source files"
+            FAIL=1
+          fi
+
+          # Supabase anon/service JWTs committed outside .env files
+          # Real JWTs are long base64 strings; .env.example values are short placeholders
+          if git grep -rEn 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.' -- '*.ts' '*.tsx' '*.js' 2>/dev/null; then
+            echo "ERROR: JWT token found in source files (should be in .env only)"
+            FAIL=1
+          fi
+
+          # Gmail app password pattern (4 groups of 4 lowercase letters)
+          if git grep -rEn '"[a-z]{4} [a-z]{4} [a-z]{4} [a-z]{4}"' -- '*.ts' '*.tsx' '*.js' 2>/dev/null; then
+            echo "ERROR: Gmail App Password pattern found in source files"
+            FAIL=1
+          fi
+
+          # Real IP addresses in non-example JS/TS files
+          if git grep -rEn '"(10|192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.[0-9]+\.[0-9]+"' -- '*.ts' '*.tsx' '*.js' 2>/dev/null | grep -v '.example'; then
+            echo "ERROR: Private IP address found in source files"
+            FAIL=1
+          fi
+
+          if [ "$FAIL" -eq 1 ]; then
+            echo ""
+            echo "Move secrets to .env / bambu-poller/.env and use placeholders in code."
+            exit 1
+          fi
+
+          echo "No leaked secrets detected."
+
+      # Verify example files exist
+      - name: Verify .env.example files exist
+        run: |
+          test -f .env.example           || (echo "Missing .env.example"            && exit 1)
+          test -f bambu-poller/.env.example || (echo "Missing bambu-poller/.env.example" && exit 1)
+          echo ".env.example files present."
