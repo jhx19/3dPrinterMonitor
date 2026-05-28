@@ -8,6 +8,8 @@ const baseProps = {
   status: "idle" as const,
   timeRemainingMinutes: null,
   filamentLevel: null,
+  updatedAt: "2024-01-01T10:00:00Z",
+  showStaleWarning: true,
   waiters: [],
   currentUserId: null,
   isJoiningQueue: false,
@@ -15,6 +17,7 @@ const baseProps = {
   isStartingPrint: false,
   alreadyInQueue: false,
   isBanned: false,
+  actionError: null,
   onJoinQueue: vi.fn().mockResolvedValue(undefined),
   onLeaveQueue: vi.fn().mockResolvedValue(undefined),
   onIveStarted: vi.fn().mockResolvedValue(undefined),
@@ -26,24 +29,24 @@ describe("PrinterCard", () => {
     expect(screen.getByText("Bambu X1C #MOREL")).toBeInTheDocument();
   });
 
-  it('shows "Idle" badge when status is idle', () => {
+  it('shows "Available" badge when status is idle', () => {
     render(<PrinterCard {...baseProps} status="idle" />);
-    expect(screen.getByText("Idle")).toBeInTheDocument();
+    expect(screen.getByText("Available")).toBeInTheDocument();
   });
 
-  it('shows "Printing" badge when status is printing', () => {
-    render(<PrinterCard {...baseProps} status="printing" />);
-    expect(screen.getByText("Printing")).toBeInTheDocument();
+  it('shows "In use" badge when status is printing', () => {
+    render(<PrinterCard {...baseProps} status="printing" timeRemainingMinutes={47} />);
+    expect(screen.getByText("In use")).toBeInTheDocument();
   });
 
   it('shows "Error" badge when status is error', () => {
     render(<PrinterCard {...baseProps} status="error" />);
-    expect(screen.getByText("Error")).toBeInTheDocument();
+    expect(screen.getAllByText("Error").length).toBeGreaterThan(0);
   });
 
   it('shows "Sign in to join queue" when no user is logged in', () => {
     render(<PrinterCard {...baseProps} currentUserId={null} />);
-    expect(screen.getByRole("button", { name: /sign in to join queue/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /sign in to join queue/i })).toBeEnabled();
   });
 
   it('shows "Join Queue" button when user is logged in and not in queue', () => {
@@ -120,7 +123,7 @@ describe("PrinterCard", () => {
 
   it("displays time remaining when provided", () => {
     render(<PrinterCard {...baseProps} timeRemainingMinutes={90} />);
-    expect(screen.getByText("1h 30m")).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.textContent === "Timer: 1h 30m")).toBeInTheDocument();
   });
 
   it("displays filament level when provided", () => {

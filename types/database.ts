@@ -6,7 +6,7 @@ export interface Database {
       printers: {
         Row: {
           id: string;
-          name: string | null;
+          name: string;
           status: PrinterStatus | string | null;
           time_remaining: number | null;
           filament_level: number | null;
@@ -15,7 +15,7 @@ export interface Database {
         };
         Insert: {
           id?: string;
-          name?: string | null;
+          name?: string;
           status?: PrinterStatus | string | null;
           time_remaining?: number | null;
           filament_level?: number | null;
@@ -24,7 +24,7 @@ export interface Database {
         };
         Update: {
           id?: string;
-          name?: string | null;
+          name?: string;
           status?: PrinterStatus | string | null;
           time_remaining?: number | null;
           filament_level?: number | null;
@@ -37,21 +37,33 @@ export interface Database {
         Row: {
           id: string;
           full_name: string | null;
+          email: string | null;
+          student_id: string | null;
           role: string | null;
+          strikes: number;
+          is_banned: boolean;
           created_at: string | null;
           [key: string]: unknown;
         };
         Insert: {
           id: string;
           full_name?: string | null;
+          email?: string | null;
+          student_id?: string | null;
           role?: string | null;
+          strikes?: number;
+          is_banned?: boolean;
           created_at?: string | null;
           [key: string]: unknown;
         };
         Update: {
           id?: string;
           full_name?: string | null;
+          email?: string | null;
+          student_id?: string | null;
           role?: string | null;
+          strikes?: number;
+          is_banned?: boolean;
           created_at?: string | null;
           [key: string]: unknown;
         };
@@ -62,21 +74,30 @@ export interface Database {
           id: string;
           printer_id: string | null;
           user_id: string;
+          tier: string;
           created_at: string | null;
+          notified_at: string | null;
+          started_at: string | null;
           [key: string]: unknown;
         };
         Insert: {
           id?: string;
           printer_id?: string | null;
           user_id: string;
+          tier?: string;
           created_at?: string | null;
+          notified_at?: string | null;
+          started_at?: string | null;
           [key: string]: unknown;
         };
         Update: {
           id?: string;
           printer_id?: string | null;
           user_id?: string;
+          tier?: string;
           created_at?: string | null;
+          notified_at?: string | null;
+          started_at?: string | null;
           [key: string]: unknown;
         };
         Relationships: [];
