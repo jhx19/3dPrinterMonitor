@@ -59,9 +59,10 @@ describe("PrinterCard", () => {
     expect(screen.getByText("In use by Alex Kim")).toBeInTheDocument();
   });
 
-  it('shows "Sign in to join queue" when no user is logged in', () => {
+  it("shows sign-in prompt and hides queue when no user is logged in", () => {
     render(<PrinterCard {...baseProps} currentUserId={null} />);
-    expect(screen.getByRole("button", { name: /sign in to join queue/i })).toBeEnabled();
+    expect(screen.getByText(/sign in to view queue/i)).toBeInTheDocument();
+    expect(screen.queryByText(/queue \(/i)).not.toBeInTheDocument();
   });
 
   it('shows "Join Queue" button when user is logged in and not in queue', () => {

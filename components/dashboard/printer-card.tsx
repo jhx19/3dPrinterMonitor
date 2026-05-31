@@ -259,6 +259,7 @@ export function PrinterCard({
           </div>
         </div>
 
+        {currentUserId !== null && (
         <section className="space-y-2">
           <h3 className="text-sm font-medium text-muted-foreground">
             Queue ({waiters.length}/{queueLimit})
@@ -296,11 +297,16 @@ export function PrinterCard({
             </ul>
           )}
         </section>
+        )}
       </CardContent>
 
       <CardFooter className="mt-auto pt-0">
         <div className="w-full space-y-2">
-          {isActiveUser ? (
+          {currentUserId === null ? (
+            <p className="text-center text-xs text-muted-foreground">
+              Sign in to view queue and join
+            </p>
+          ) : isActiveUser ? (
             <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
               You&apos;re printing on this machine now.
             </div>
