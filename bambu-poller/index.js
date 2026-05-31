@@ -222,6 +222,7 @@ async function updatePrinter(printer, printPayload) {
 // ─── Claim-window watchdog (every minute) ─────────────────────────────────────
 
 async function claimWindowWatchdog() {
+  // 1. Expire overdue windows (notified_at set but 10 min passed, no print started).
   const cutoff = new Date(Date.now() - CLAIM_WINDOW_MS).toISOString();
 
   const { data: overdue, error } = await supabase
@@ -232,16 +233,32 @@ async function claimWindowWatchdog() {
 
   if (error) {
     console.error("[watchdog] query error:", error.message);
-    return;
+  } else {
+    for (const entry of overdue ?? []) {
+      const row = await getPrinterRow(entry.printer_id);
+      if (!row || row.status !== "idle" || row.active_user_id) continue;
+
+      const cfg = PRINTER_CONFIG.find((p) => p.supabaseId === entry.printer_id);
+      console.log(`[watchdog] claim window expired: user ${entry.user_id} on ${cfg?.name ?? entry.printer_id}`);
+      await expireHead(entry);
+    }
   }
 
-  for (const entry of overdue ?? []) {
-    const row = await getPrinterRow(entry.printer_id);
-    if (!row || row.status !== "idle" || row.active_user_id) continue;
+  // 2. Reconcile: for every idle printer whose queue head has no notified_at yet,
+  //    start the claim window now. This covers the case where someone joins a queue
+  //    on an already-idle printer (no MQTT transition fires in that situation).
+  const { data: idlePrinters } = await supabase
+    .from("printers")
+    .select("id")
+    .eq("status", "idle");
 
-    const cfg = PRINTER_CONFIG.find((p) => p.supabaseId === entry.printer_id);
-    console.log(`[watchdog] claim window expired: user ${entry.user_id} on ${cfg?.name ?? entry.printer_id}`);
-    await expireHead(entry);
+  for (const printer of idlePrinters ?? []) {
+    const queue = await getQueue(printer.id);
+    const head = queue[0];
+    if (head && !head.notified_at) {
+      console.log(`[watchdog] starting missed claim window for user ${head.user_id} on printer ${printer.id}`);
+      await startClaimWindow(head);
+    }
   }
 }
 
