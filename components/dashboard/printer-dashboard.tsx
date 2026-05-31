@@ -17,12 +17,12 @@ type Profile = Database["public"]["Tables"]["profiles"]["Row"];
 
 const QUEUE_LIMIT = 3;
 
-// Fixed display order by printer UUID. Swap SHIITAKE (44…) and FLY AGARIC (33…).
+// Fixed display order by printer UUID.
 const PRINTER_DISPLAY_ORDER: Record<string, number> = {
   "11111111-1111-1111-1111-111111111111": 0, // MOREL
   "22222222-2222-2222-2222-222222222222": 1, // TURKEY TAIL
-  "44444444-4444-4444-4444-444444444444": 2, // SHIITAKE
-  "33333333-3333-3333-3333-333333333333": 3, // FLY AGARIC
+  "33333333-3333-3333-3333-333333333333": 2, // FLY AGARIC
+  "44444444-4444-4444-4444-444444444444": 3, // SHIITAKE
 };
 
 interface PrinterViewModel {
@@ -55,16 +55,16 @@ const mockPrinters: PrinterViewModel[] = [
     updatedAt: "2026-05-28T02:14:00.000Z",
   },
   {
-    id: "mock-printer-4",
-    name: "SHIITAKE",
+    id: "mock-printer-3",
+    name: "FLY AGARIC",
     status: "error",
     timeRemainingMinutes: null,
     activeUserId: null,
     updatedAt: "2026-05-28T02:11:00.000Z",
   },
   {
-    id: "mock-printer-3",
-    name: "FLY AGARIC",
+    id: "mock-printer-4",
+    name: "TURKEY TAIL",
     status: "idle",
     timeRemainingMinutes: null,
     activeUserId: null,
