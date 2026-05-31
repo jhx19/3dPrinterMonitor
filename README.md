@@ -1,6 +1,6 @@
 # GIX Lab 3D Printer Efficiency Platform
 
-**Live app: [printers-git-main-jason-jin-s-projects.vercel.app](https://printers-git-main-jason-jin-s-projects.vercel.app)**
+**Live app: [printers-git-main-jason-jin-s-projects.vercel.app](https://printermonitor-qa4vpp5s6-jason-jin-s-projects.vercel.app/)**
 
 A web application that maximizes 3D printing efficiency in the GIX Prototyping Lab by giving students real-time printer visibility, a fair queue system, and smart notifications - so printers stay in continuous use and no one has to camp out in the lab waiting for a machine.
 
