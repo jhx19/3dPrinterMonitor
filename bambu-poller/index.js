@@ -188,7 +188,19 @@ async function reconcileClaimWindow(printer) {
 async function handleTransition(printer, newStatus) {
   const prev = lastStatus[printer.supabaseId];
   lastStatus[printer.supabaseId] = newStatus;
-  if (prev === null) return;
+
+  if (prev === null) {
+    // First MQTT message after poller startup. No transition to detect, but if
+    // the printer is not printing and active_user_id is still set, the print
+    // ended while the poller was offline — clear it now.
+    if (newStatus !== "printing") {
+      await supabase
+        .from("printers")
+        .update({ active_user_id: null })
+        .eq("id", printer.supabaseId);
+    }
+    return;
+  }
 
   if (prev === "printing" && (newStatus === "idle" || newStatus === "error")) {
     await supabase
@@ -254,7 +266,20 @@ async function claimWindowWatchdog() {
     }
   }
 
-  // 2. Reconcile missed windows: idle printers whose queue head has no notified_at.
+  // 2. Clear stale active_user_id: any non-printing printer that still has one set
+  //    means the poller missed the print-end transition (e.g. restarted mid-print).
+  const { data: stale } = await supabase
+    .from("printers")
+    .select("id")
+    .neq("status", "printing")
+    .not("active_user_id", "is", null);
+
+  for (const p of stale ?? []) {
+    console.log(`[watchdog] clearing stale active_user_id on printer ${p.id}`);
+    await supabase.from("printers").update({ active_user_id: null }).eq("id", p.id);
+  }
+
+  // 3. Reconcile missed windows: idle printers whose queue head has no notified_at.
   //    This happens when someone joins an already-idle printer (no MQTT transition).
   //    We set notified_at for the countdown display but do NOT send email —
   //    the user can already see the printer is available on the dashboard.
