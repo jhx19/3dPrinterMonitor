@@ -1,6 +1,6 @@
 # GIX Lab 3D Printer Hub
 
-**Live app: [printermonitor-qa4vpp5s6-jason-jin-s-projects.vercel.app](https://printermonitor-qa4vpp5s6-jason-jin-s-projects.vercel.app)**
+**Live app: [printermonitor-git-main-jason-jin-s-projects.vercel.app](https://printermonitor-qa4vpp5s6-jason-jin-s-projects.vercel.app/)**
 
 A real-time dashboard and soft coordination queue for the GIX Prototyping Lab's four Bambu Lab X1 Carbon printers. Students can check printer availability remotely, join a waitlist, and receive email notifications when it's their turn — without physically camping in the lab.
 
