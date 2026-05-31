@@ -1,9 +1,3 @@
-# Pull Request Template
-
-> Copy this into your repository as `.github/pull_request_template.md` so it auto-populates on every PR.
-
----
-
 ## Closes
 
 Closes #[issue_number]

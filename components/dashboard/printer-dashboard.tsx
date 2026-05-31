@@ -17,6 +17,14 @@ type Profile = Database["public"]["Tables"]["profiles"]["Row"];
 
 const QUEUE_LIMIT = 3;
 
+// Fixed display order by printer UUID.
+const PRINTER_DISPLAY_ORDER: Record<string, number> = {
+  "11111111-1111-1111-1111-111111111111": 0, // MOREL
+  "22222222-2222-2222-2222-222222222222": 1, // TURKEY TAIL
+  "33333333-3333-3333-3333-333333333333": 2, // FLY AGARIC
+  "44444444-4444-4444-4444-444444444444": 3, // SHIITAKE
+};
+
 interface PrinterViewModel {
   id: string;
   name: string;
@@ -152,7 +160,7 @@ export function PrinterDashboard() {
 
     setErrorMessage(null);
     const [printerResult, queueResult] = await Promise.all([
-      supabase.from("printers").select("*").order("name", { ascending: true }),
+      supabase.from("printers").select("*"),
       supabase.from("queues").select("*"),
     ]);
 
@@ -167,7 +175,10 @@ export function PrinterDashboard() {
       return;
     }
 
-    const printerRows = printerResult.data ?? [];
+    const printerRows = (printerResult.data ?? []).sort(
+      (a, b) =>
+        (PRINTER_DISPLAY_ORDER[a.id] ?? 99) - (PRINTER_DISPLAY_ORDER[b.id] ?? 99),
+    );
     setPrinters(
       printerRows.map((row) => ({
         id: row.id,
