@@ -5,25 +5,21 @@
  * Connects to each printer's local MQTT broker, reads live telemetry,
  * and writes status + queue lifecycle events to Supabase.
  *
- * Email notifications are handled entirely by the Supabase Edge Function
- * "send-notification", triggered by database webhooks. This file contains
- * no email credentials and needs no access to Gmail.
- *
- * Queue model (soft coordination):
- *   • printer becomes idle → head of queue gets notified_at set
- *     → Edge Function sends "it's your turn" email
- *   • 10 min passes with no print started → head removed, no_show_records
- *     inserted → Edge Function sends "removed from waitlist" email
- *   • print ends/errors → active_user_id cleared → Edge Function sends
- *     "done / error" email
+ * Email logic (no Gmail credentials needed here):
+ *   • Poller calls the Edge Function directly for "it's your turn" emails —
+ *     only in genuine "you waited and now it's your turn" cases:
+ *       - printer transitions printing → idle and someone was already waiting
+ *       - previous head timed out and next person is promoted
+ *   • Joining an already-idle empty queue does NOT send email (user can see
+ *     the printer is available right there on the dashboard).
+ *   • No-show/removal email: triggered by no_show_records INSERT webhook.
+ *   • Print done/error email: triggered by printers UPDATE webhook.
  *
  * SETUP:
  *   1. Install Node.js  →  https://nodejs.org
- *   2. Copy this folder to the desktop (or anywhere)
- *   3. cd bambu-poller && npm install
- *   4. Copy .env.example to .env and fill in SUPABASE_URL + SUPABASE_SERVICE_KEY
- *      and printer credentials. No Gmail credentials needed here.
- *   5. npm start
+ *   2. cd bambu-poller && npm install
+ *   3. Copy .env.example to .env and fill in credentials.
+ *   4. npm start
  */
 
 require("dotenv").config();
@@ -31,12 +27,11 @@ require("dotenv").config();
 const mqtt = require("mqtt");
 const { createClient } = require("@supabase/supabase-js");
 
-// ─── Configuration (from .env) ────────────────────────────────────────────────
+// ─── Configuration ─────────────────────────────────────────────────────────────
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-
-const CLAIM_WINDOW_MS = 10 * 60 * 1000; // 10-minute window
+const CLAIM_WINDOW_MS = 10 * 60 * 1000;
 
 const PRINTER_CONFIG = [1, 2, 3, 4]
   .map((n) => ({
@@ -48,11 +43,11 @@ const PRINTER_CONFIG = [1, 2, 3, 4]
   }))
   .filter((p) => p.supabaseId && p.ip && p.serialNumber && p.accessCode);
 
-// ─── Validate configuration ────────────────────────────────────────────────────
+// ─── Validate ──────────────────────────────────────────────────────────────────
 
 for (const key of ["SUPABASE_URL", "SUPABASE_SERVICE_KEY"]) {
   if (!process.env[key]) {
-    console.error(`Missing required env var ${key}. Copy .env.example to .env and fill it in.`);
+    console.error(`Missing required env var ${key}.`);
     process.exit(1);
   }
 }
@@ -61,16 +56,16 @@ if (PRINTER_CONFIG.length === 0) {
   process.exit(1);
 }
 
-// ─── Supabase client ───────────────────────────────────────────────────────────
+// ─── Clients ───────────────────────────────────────────────────────────────────
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-// ─── In-memory state ──────────────────────────────────────────────────────────
+// ─── In-memory state ───────────────────────────────────────────────────────────
 
 const lastStatus = {};
 for (const p of PRINTER_CONFIG) lastStatus[p.supabaseId] = null;
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function toStatus(gcodeState) {
   switch ((gcodeState ?? "").toUpperCase()) {
@@ -118,18 +113,43 @@ async function getPrinterRow(printerId) {
   return data ?? null;
 }
 
-// Sets notified_at on the queue head, which triggers the Edge Function webhook
-// to send the "it's your turn" email automatically.
-async function startClaimWindow(entry) {
+// Call the Edge Function directly (no email credentials in this file).
+// sendEmail=true  → sets notified_at AND triggers the "it's your turn" email.
+// sendEmail=false → only sets notified_at (for countdown display); no email.
+async function startClaimWindow(entry, sendEmail) {
   if (!entry) return;
+
   await supabase
     .from("queues")
     .update({ notified_at: new Date().toISOString() })
     .eq("id", entry.id);
+
+  if (!sendEmail) return;
+
+  // Derive Edge Function URL from the Supabase project URL.
+  const edgeUrl = `${SUPABASE_URL}/functions/v1/send-notification`;
+  try {
+    const res = await fetch(edgeUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+      },
+      body: JSON.stringify({
+        type: "queue_notified",
+        record: { user_id: entry.user_id, printer_id: entry.printer_id ?? entry.printerId },
+      }),
+    });
+    if (!res.ok) {
+      console.error(`[edge] send-notification returned ${res.status}`);
+    }
+  } catch (err) {
+    console.error(`[edge] failed to call send-notification:`, err.message);
+  }
 }
 
-// Removes an expired head. Inserting into no_show_records triggers the Edge
-// Function to send the "removed from waitlist" email automatically.
+// Removes the expired head. Inserting into no_show_records triggers the
+// Edge Function webhook to send the "removed from waitlist" email.
 async function expireHead(entry) {
   await supabase.from("no_show_records").insert({
     user_id: entry.user_id,
@@ -149,28 +169,27 @@ async function expireHead(entry) {
 
   await supabase.from("queues").delete().eq("id", entry.id);
 
-  // Start window for the next person in queue.
+  // Promote the next person — they were waiting, so send email.
   const next = (await getQueue(entry.printer_id))[0] ?? null;
-  await startClaimWindow(next);
+  await startClaimWindow(next, true);
 }
 
-// If the printer is idle and the head has no active window, start one.
+// Called after a printing→idle transition: someone was already in the queue
+// and waited through a print job, so they deserve the "it's your turn" email.
 async function reconcileClaimWindow(printer) {
   const queue = await getQueue(printer.supabaseId);
   const head = queue[0];
   if (!head || head.notified_at) return;
-  await startClaimWindow(head);
+  await startClaimWindow(head, true); // waited through a print → send email
 }
 
-// ─── State-machine handler ────────────────────────────────────────────────────
+// ─── State-machine handler ─────────────────────────────────────────────────────
 
 async function handleTransition(printer, newStatus) {
   const prev = lastStatus[printer.supabaseId];
   lastStatus[printer.supabaseId] = newStatus;
-  if (prev === null) return; // first reading after startup
+  if (prev === null) return;
 
-  // Print ended: clear active_user_id. The UPDATE triggers the Edge Function
-  // which sends the "print done / error" email to whoever had claimed it.
   if (prev === "printing" && (newStatus === "idle" || newStatus === "error")) {
     await supabase
       .from("printers")
@@ -178,8 +197,6 @@ async function handleTransition(printer, newStatus) {
       .eq("id", printer.supabaseId);
   }
 
-  // Printer became available: reset stale claim windows so the head gets a
-  // fresh 10-minute window from now.
   if (newStatus === "idle" && prev !== "idle") {
     await supabase
       .from("queues")
@@ -188,7 +205,7 @@ async function handleTransition(printer, newStatus) {
   }
 }
 
-// ─── Push telemetry to Supabase ───────────────────────────────────────────────
+// ─── Push telemetry to Supabase ────────────────────────────────────────────────
 
 async function updatePrinter(printer, printPayload) {
   const status = toStatus(printPayload.gcode_state);
@@ -198,12 +215,7 @@ async function updatePrinter(printer, printPayload) {
 
   const { error } = await supabase
     .from("printers")
-    .update({
-      status,
-      time_remaining: timeRemaining,
-      error_code: errorCode,
-      updated_at: new Date().toISOString(),
-    })
+    .update({ status, time_remaining: timeRemaining, error_code: errorCode, updated_at: new Date().toISOString() })
     .eq("id", printer.supabaseId);
 
   if (error) {
@@ -219,12 +231,11 @@ async function updatePrinter(printer, printPayload) {
   if (status === "idle") await reconcileClaimWindow(printer);
 }
 
-// ─── Claim-window watchdog (every minute) ─────────────────────────────────────
+// ─── Watchdog (every 60 s) ─────────────────────────────────────────────────────
 
 async function claimWindowWatchdog() {
-  // 1. Expire overdue windows (notified_at set but 10 min passed, no print started).
+  // 1. Expire overdue windows.
   const cutoff = new Date(Date.now() - CLAIM_WINDOW_MS).toISOString();
-
   const { data: overdue, error } = await supabase
     .from("queues")
     .select("id, user_id, printer_id, notified_at")
@@ -237,16 +248,16 @@ async function claimWindowWatchdog() {
     for (const entry of overdue ?? []) {
       const row = await getPrinterRow(entry.printer_id);
       if (!row || row.status !== "idle" || row.active_user_id) continue;
-
       const cfg = PRINTER_CONFIG.find((p) => p.supabaseId === entry.printer_id);
       console.log(`[watchdog] claim window expired: user ${entry.user_id} on ${cfg?.name ?? entry.printer_id}`);
       await expireHead(entry);
     }
   }
 
-  // 2. Reconcile: for every idle printer whose queue head has no notified_at yet,
-  //    start the claim window now. This covers the case where someone joins a queue
-  //    on an already-idle printer (no MQTT transition fires in that situation).
+  // 2. Reconcile missed windows: idle printers whose queue head has no notified_at.
+  //    This happens when someone joins an already-idle printer (no MQTT transition).
+  //    We set notified_at for the countdown display but do NOT send email —
+  //    the user can already see the printer is available on the dashboard.
   const { data: idlePrinters } = await supabase
     .from("printers")
     .select("id")
@@ -256,15 +267,15 @@ async function claimWindowWatchdog() {
     const queue = await getQueue(printer.id);
     const head = queue[0];
     if (head && !head.notified_at) {
-      console.log(`[watchdog] starting missed claim window for user ${head.user_id} on printer ${printer.id}`);
-      await startClaimWindow(head);
+      console.log(`[watchdog] setting countdown for user ${head.user_id} on idle printer ${printer.id} (no email)`);
+      await startClaimWindow(head, false); // fresh join on idle → no email
     }
   }
 }
 
 setInterval(() => void claimWindowWatchdog(), 60_000);
 
-// ─── MQTT: connect one printer ────────────────────────────────────────────────
+// ─── MQTT ──────────────────────────────────────────────────────────────────────
 
 function connectPrinter(printer) {
   const client = mqtt.connect(`mqtts://${printer.ip}`, {
@@ -285,14 +296,8 @@ function connectPrinter(printer) {
 
   client.on("message", (_topic, payload) => {
     let data;
-    try {
-      data = JSON.parse(payload.toString());
-    } catch {
-      return;
-    }
-    if (data.print) {
-      void updatePrinter(printer, data.print);
-    }
+    try { data = JSON.parse(payload.toString()); } catch { return; }
+    if (data.print) void updatePrinter(printer, data.print);
   });
 
   client.on("reconnect", () => console.log(`[${printer.name}] reconnecting…`));
@@ -300,9 +305,7 @@ function connectPrinter(printer) {
   client.on("offline", () => console.warn(`[${printer.name}] offline`));
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// ─── Main ──────────────────────────────────────────────────────────────────────
 
 console.log("Bambu Poller starting — connecting to", PRINTER_CONFIG.length, "printers");
-for (const printer of PRINTER_CONFIG) {
-  connectPrinter(printer);
-}
+for (const printer of PRINTER_CONFIG) connectPrinter(printer);

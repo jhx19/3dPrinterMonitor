@@ -1,27 +1,29 @@
 /**
  * Supabase Edge Function: send-notification
  *
- * Receives database webhooks and sends email notifications.
- * Gmail credentials are stored as Supabase Edge Function secrets —
- * they never appear in the codebase or on any makerspace computer.
+ * Handles two types of incoming requests:
  *
- * Triggered by three webhooks (set up in Supabase dashboard):
- *   1. queues  UPDATE  → notified_at just set  → "it's your turn" email
- *   2. no_show_records INSERT                  → "you've been removed" email
- *   3. printers UPDATE → active_user_id cleared → "print done / error" email
+ * A) Direct POST from the poller (explicit event, no webhook):
+ *      { type: "queue_notified", record: { user_id, printer_id } }
+ *    → "it's your turn" email — only sent in genuine "you waited" cases.
+ *       Joining an already-idle empty queue does NOT trigger this.
  *
- * DEPLOY:
- *   supabase functions deploy send-notification
+ * B) Supabase database webhooks:
+ *    • no_show_records INSERT → "you've been removed" email
+ *    • printers UPDATE (active_user_id cleared) → "print done / error" email
  *
- * SET SECRETS (once, in the Supabase dashboard or CLI):
- *   supabase secrets set GMAIL_USER=your@gmail.com
- *   supabase secrets set GMAIL_APP_PASSWORD="xxxx xxxx xxxx xxxx"
+ * Gmail credentials are stored as Supabase Edge Function secrets only.
+ * They never appear in the codebase or on any makerspace computer.
+ *
+ * SECRETS REQUIRED (set in Supabase dashboard → Edge Functions → Secrets):
+ *   GMAIL_USER
+ *   GMAIL_APP_PASSWORD
  */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import nodemailer from "npm:nodemailer@6";
 
-const DASHBOARD_URL = "https://gix-printer-hub.vercel.app/dashboard"; // update if URL changes
+const DASHBOARD_URL = "https://3-d-printer-monitor.vercel.app/dashboard";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -36,7 +38,7 @@ const mailer = nodemailer.createTransport({
   },
 });
 
-async function getUserInfo(userId: string): Promise<{ email: string | null; full_name: string | null }> {
+async function getUserInfo(userId: string) {
   const { data } = await supabase
     .from("profiles")
     .select("email, full_name")
@@ -65,7 +67,7 @@ async function sendEmail(to: string | null, subject: string, text: string) {
   }
 }
 
-// ── Handler: queue entry got notified_at set → "it's your turn" ───────────────
+// A) Poller calls this directly when someone's turn genuinely arrives.
 async function handleQueueNotified(record: Record<string, unknown>) {
   const { user_id, printer_id } = record;
   const [user, printerName] = await Promise.all([
@@ -76,11 +78,11 @@ async function handleQueueNotified(record: Record<string, unknown>) {
   await sendEmail(
     user.email,
     `${printerName} is ready for you!`,
-    `Hi ${name},\n\n${printerName} is now free and you are first in line.\n\nYou have 10 minutes to go to the makerspace and start your print.\nOnce the printer begins, open the GIX Printer Hub and click "I've Started":\n${DASHBOARD_URL}\n\nIf no print starts within 10 minutes, your spot passes to the next person.\n\nGIX Makerspace`,
+    `Hi ${name},\n\n${printerName} is now free and it's your turn.\n\nYou have 10 minutes to go to the makerspace and start your print.\nOnce the printer is running, open the GIX Printer Hub and click "I've Started":\n${DASHBOARD_URL}\n\nIf no print starts within 10 minutes, your spot passes to the next person.\n\nGIX Makerspace`,
   );
 }
 
-// ── Handler: no-show record inserted → "you've been removed" ──────────────────
+// B1) no_show_records INSERT webhook → "you've been removed".
 async function handleNoShow(record: Record<string, unknown>) {
   const { user_id, printer_id } = record;
   const [user, printerName] = await Promise.all([
@@ -95,13 +97,13 @@ async function handleNoShow(record: Record<string, unknown>) {
   );
 }
 
-// ── Handler: active_user_id cleared on printer → print done or error ──────────
+// B2) printers UPDATE webhook → active_user_id cleared → print done or error.
 async function handlePrintEnded(
   oldRecord: Record<string, unknown>,
   newRecord: Record<string, unknown>,
 ) {
   const activeUserId = oldRecord.active_user_id as string | null;
-  if (!activeUserId) return; // wasn't claimed via "I've Started" — nothing to send
+  if (!activeUserId) return;
 
   const [user, printerName] = await Promise.all([
     getUserInfo(activeUserId),
@@ -125,16 +127,8 @@ async function handlePrintEnded(
 }
 
 // ── Main handler ───────────────────────────────────────────────────────────────
-Deno.serve(async (req: Request) => {
-  // Supabase sends webhook secret in Authorization header — verify it.
-  const webhookSecret = Deno.env.get("WEBHOOK_SECRET");
-  if (webhookSecret) {
-    const auth = req.headers.get("authorization") ?? "";
-    if (auth !== `Bearer ${webhookSecret}`) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-  }
 
+Deno.serve(async (req: Request) => {
   let payload: Record<string, unknown>;
   try {
     payload = await req.json();
@@ -144,27 +138,28 @@ Deno.serve(async (req: Request) => {
 
   const { type, table, record, old_record } = payload as {
     type: string;
-    table: string;
+    table?: string;
     record: Record<string, unknown>;
-    old_record: Record<string, unknown>;
+    old_record?: Record<string, unknown>;
   };
 
   try {
-    if (table === "queues" && type === "UPDATE") {
-      // notified_at just got set for the first time
-      if (!old_record.notified_at && record.notified_at) {
-        await handleQueueNotified(record);
-      }
+    // A) Direct call from poller
+    if (type === "queue_notified") {
+      await handleQueueNotified(record);
+
+    // B1) no_show_records INSERT webhook
     } else if (table === "no_show_records" && type === "INSERT") {
       await handleNoShow(record);
+
+    // B2) printers UPDATE webhook — active_user_id cleared
     } else if (table === "printers" && type === "UPDATE") {
-      // active_user_id was cleared (print ended)
-      if (old_record.active_user_id && !record.active_user_id) {
+      if (old_record?.active_user_id && !record.active_user_id) {
         await handlePrintEnded(old_record, record);
       }
     }
   } catch (err) {
-    console.error("[send-notification] handler error:", err);
+    console.error("[send-notification] error:", err);
     return new Response("Internal error", { status: 500 });
   }
 
