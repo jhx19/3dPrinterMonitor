@@ -1,57 +1,43 @@
 /**
  * Bambu Lab MQTT Poller
  *
- * Runs on the makerspace computer that is on the same LAN as the printers.
+ * Runs on the makerspace computer (same LAN as the printers).
  * Connects to each printer's local MQTT broker, reads live telemetry,
- * and pushes status updates + queue lifecycle events to Supabase.
+ * and writes status + queue lifecycle events to Supabase.
  *
- * Queue model (soft coordination, not access control):
- *   • printer becomes available (idle) → head of the waitlist enters a 10-minute
- *                                        claim window (notified_at set + email)
- *   • printer stays idle for the full window (no print started)
- *                                      → head is removed from the waitlist
- *                                         (email), the next person enters a window
- *   • printer changes to printing      → the claim window ends; on the dashboard
- *                                         every person in the waitlist sees an
- *                                         "I've Started" button. Whoever clicks it
- *                                         becomes printers.active_user_id (handled
- *                                         by the claim_printer RPC on the web app).
- *   • print finishes or errors         → email the active user, clear
- *                                         active_user_id, restart the cycle
+ * Email notifications are handled entirely by the Supabase Edge Function
+ * "send-notification", triggered by database webhooks. This file contains
+ * no email credentials and needs no access to Gmail.
  *
- * A removed/expired user is recorded for TA reference (strikes + no_show_records)
- * but is NEVER auto-banned — the system is a notification-assisted waitlist.
+ * Queue model (soft coordination):
+ *   • printer becomes idle → head of queue gets notified_at set
+ *     → Edge Function sends "it's your turn" email
+ *   • 10 min passes with no print started → head removed, no_show_records
+ *     inserted → Edge Function sends "removed from waitlist" email
+ *   • print ends/errors → active_user_id cleared → Edge Function sends
+ *     "done / error" email
  *
- * SETUP (on the makerspace computer):
+ * SETUP:
  *   1. Install Node.js  →  https://nodejs.org
  *   2. Copy this folder to the desktop (or anywhere)
- *   3. Open a terminal in this folder and run:  npm install
- *   4. Copy .env.example to .env and fill in every value
- *   5. Run:  npm start   (keep the terminal open; minimise it to the taskbar)
- *
- * WHERE THE VALUES COME FROM:
- *   • Supabase service key:  Supabase dashboard → Project Settings → API
- *   • Gmail app password:    myaccount.google.com → Security → App passwords
- *   • Printer IP / SN / code: each Bambu touchscreen → Settings → Network → LAN Mode
- *   • Printer UUID (PRINTER_n_ID): the value seeded by supabase/schema.sql
+ *   3. cd bambu-poller && npm install
+ *   4. Copy .env.example to .env and fill in SUPABASE_URL + SUPABASE_SERVICE_KEY
+ *      and printer credentials. No Gmail credentials needed here.
+ *   5. npm start
  */
 
 require("dotenv").config();
 
 const mqtt = require("mqtt");
-const nodemailer = require("nodemailer");
 const { createClient } = require("@supabase/supabase-js");
 
-// ─── Configuration (from .env) ─────────────────────────────────────────────────
+// ─── Configuration (from .env) ────────────────────────────────────────────────
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY; // NOT the anon key
-const GMAIL_USER = process.env.GMAIL_USER;
-const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-const CLAIM_WINDOW_MS = 10 * 60 * 1000; // 10-minute window for the head of the queue
+const CLAIM_WINDOW_MS = 10 * 60 * 1000; // 10-minute window
 
-// Build the printer list from PRINTER_1_*..PRINTER_4_* in .env.
 const PRINTER_CONFIG = [1, 2, 3, 4]
   .map((n) => ({
     supabaseId: process.env[`PRINTER_${n}_ID`],
@@ -64,7 +50,7 @@ const PRINTER_CONFIG = [1, 2, 3, 4]
 
 // ─── Validate configuration ────────────────────────────────────────────────────
 
-for (const key of ["SUPABASE_URL", "SUPABASE_SERVICE_KEY", "GMAIL_USER", "GMAIL_APP_PASSWORD"]) {
+for (const key of ["SUPABASE_URL", "SUPABASE_SERVICE_KEY"]) {
   if (!process.env[key]) {
     console.error(`Missing required env var ${key}. Copy .env.example to .env and fill it in.`);
     process.exit(1);
@@ -75,14 +61,9 @@ if (PRINTER_CONFIG.length === 0) {
   process.exit(1);
 }
 
-// ─── Supabase + email clients ─────────────────────────────────────────────────
+// ─── Supabase client ───────────────────────────────────────────────────────────
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-
-const mailer = nodemailer.createTransport({
-  service: "gmail",
-  auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
-});
 
 // ─── In-memory state ──────────────────────────────────────────────────────────
 
@@ -104,9 +85,6 @@ function toStatus(gcodeState) {
   }
 }
 
-// Capture the raw Bambu error code when the printer is in an error state.
-// Mapping codes to friendly text is future work; for now we just store the raw
-// value so the dashboard can fall back to "Printer needs attention".
 function errorCodeFromPayload(print) {
   if (typeof print.print_error === "number" && print.print_error !== 0) {
     return String(print.print_error);
@@ -116,16 +94,6 @@ function errorCodeFromPayload(print) {
     return `HMS ${hms[0].attr ?? "?"}-${hms[0].code ?? "?"}`;
   }
   return null;
-}
-
-async function sendEmail(to, subject, text) {
-  if (!to) return;
-  try {
-    await mailer.sendMail({ from: `"GIX 3D Printer Hub" <${GMAIL_USER}>`, to, subject, text });
-    console.log(`[email] sent "${subject}" → ${to}`);
-  } catch (err) {
-    console.error(`[email] failed to send to ${to}:`, err.message);
-  }
 }
 
 async function getQueue(printerId) {
@@ -141,15 +109,6 @@ async function getQueue(printerId) {
   return data ?? [];
 }
 
-async function getUserInfo(userId) {
-  const { data } = await supabase
-    .from("profiles")
-    .select("email, full_name")
-    .eq("id", userId)
-    .single();
-  return data ?? {};
-}
-
 async function getPrinterRow(printerId) {
   const { data } = await supabase
     .from("printers")
@@ -159,54 +118,40 @@ async function getPrinterRow(printerId) {
   return data ?? null;
 }
 
-// Start the 10-minute claim window for the head of the queue.
-async function notifyHead(entry, printerName) {
+// Sets notified_at on the queue head, which triggers the Edge Function webhook
+// to send the "it's your turn" email automatically.
+async function startClaimWindow(entry) {
   if (!entry) return;
   await supabase
     .from("queues")
     .update({ notified_at: new Date().toISOString() })
     .eq("id", entry.id);
-  const { email, full_name } = await getUserInfo(entry.user_id);
-  const name = full_name ?? "there";
-  await sendEmail(
-    email,
-    `${printerName} is ready for you!`,
-    `Hi ${name},\n\n${printerName} is now free and you are next in line.\n\nYou have 10 minutes to go to the makerspace and start your print. Once the printer begins printing, open the GIX 3D Printer Hub and click "I've Started" so we know it's you.\n\nIf no print is started within 10 minutes, your spot passes to the next person.\n\nGIX Makerspace`
-  );
 }
 
-// Head's claim window expired with no print started → drop them, promote the next.
-async function expireHead(entry, printerName) {
-  const { user_id } = entry;
-  const { email, full_name } = await getUserInfo(user_id);
-  const name = full_name ?? "there";
-
-  await sendEmail(
-    email,
-    `You've been removed from the ${printerName} waitlist`,
-    `Hi ${name},\n\nYour 10-minute window for ${printerName} passed without a print starting, so you've been removed from the waitlist. You're welcome to join the queue again any time.\n\nGIX Makerspace`
-  );
-
-  // Record for TA reference only — no automatic ban.
+// Removes an expired head. Inserting into no_show_records triggers the Edge
+// Function to send the "removed from waitlist" email automatically.
+async function expireHead(entry) {
   await supabase.from("no_show_records").insert({
-    user_id,
+    user_id: entry.user_id,
     printer_id: entry.printer_id,
     note: `Claim window (${CLAIM_WINDOW_MS / 60000} min) expired with no print started`,
   });
+
   const { data: profile } = await supabase
     .from("profiles")
     .select("strikes")
-    .eq("id", user_id)
+    .eq("id", entry.user_id)
     .single();
   await supabase
     .from("profiles")
     .update({ strikes: (profile?.strikes ?? 0) + 1 })
-    .eq("id", user_id);
+    .eq("id", entry.user_id);
 
   await supabase.from("queues").delete().eq("id", entry.id);
 
+  // Start window for the next person in queue.
   const next = (await getQueue(entry.printer_id))[0] ?? null;
-  await notifyHead(next, printerName);
+  await startClaimWindow(next);
 }
 
 // If the printer is idle and the head has no active window, start one.
@@ -214,7 +159,7 @@ async function reconcileClaimWindow(printer) {
   const queue = await getQueue(printer.supabaseId);
   const head = queue[0];
   if (!head || head.notified_at) return;
-  await notifyHead(head, printer.name);
+  await startClaimWindow(head);
 }
 
 // ─── State-machine handler ────────────────────────────────────────────────────
@@ -222,33 +167,19 @@ async function reconcileClaimWindow(printer) {
 async function handleTransition(printer, newStatus) {
   const prev = lastStatus[printer.supabaseId];
   lastStatus[printer.supabaseId] = newStatus;
-  if (prev === null) return; // first reading after startup — no transition
+  if (prev === null) return; // first reading after startup
 
-  // Print ended (was printing, now idle or error): email the active user, clear them.
+  // Print ended: clear active_user_id. The UPDATE triggers the Edge Function
+  // which sends the "print done / error" email to whoever had claimed it.
   if (prev === "printing" && (newStatus === "idle" || newStatus === "error")) {
-    const row = await getPrinterRow(printer.supabaseId);
-    const activeUserId = row?.active_user_id ?? null;
-    if (activeUserId) {
-      const { email, full_name } = await getUserInfo(activeUserId);
-      const name = full_name ?? "there";
-      if (newStatus === "idle") {
-        await sendEmail(
-          email,
-          `Your print on ${printer.name} is done!`,
-          `Hi ${name},\n\nYour print job on ${printer.name} has finished. Please collect your print from the makerspace.\n\nGIX Makerspace`
-        );
-      } else {
-        await sendEmail(
-          email,
-          `Print error on ${printer.name}`,
-          `Hi ${name},\n\nYour print job on ${printer.name} stopped with an error. Please check the printer in the makerspace.\n\nGIX Makerspace`
-        );
-      }
-    }
-    await supabase.from("printers").update({ active_user_id: null }).eq("id", printer.supabaseId);
+    await supabase
+      .from("printers")
+      .update({ active_user_id: null })
+      .eq("id", printer.supabaseId);
   }
 
-  // Became available: reset stale claim windows so the head gets a fresh 10 minutes.
+  // Printer became available: reset stale claim windows so the head gets a
+  // fresh 10-minute window from now.
   if (newStatus === "idle" && prev !== "idle") {
     await supabase
       .from("queues")
@@ -281,14 +212,14 @@ async function updatePrinter(printer, printPayload) {
   }
 
   console.log(
-    `[${printer.name}] ${status}  ${timeRemaining ?? "?"}m remaining${errorCode ? `  error=${errorCode}` : ""}`
+    `[${printer.name}] ${status}  ${timeRemaining ?? "?"}m remaining${errorCode ? `  error=${errorCode}` : ""}`,
   );
 
   await handleTransition(printer, status);
   if (status === "idle") await reconcileClaimWindow(printer);
 }
 
-// ─── Claim-window watchdog (runs every minute) ─────────────────────────────────
+// ─── Claim-window watchdog (every minute) ─────────────────────────────────────
 
 async function claimWindowWatchdog() {
   const cutoff = new Date(Date.now() - CLAIM_WINDOW_MS).toISOString();
@@ -305,16 +236,12 @@ async function claimWindowWatchdog() {
   }
 
   for (const entry of overdue ?? []) {
-    const cfg = PRINTER_CONFIG.find((p) => p.supabaseId === entry.printer_id);
-    const printerName = cfg?.name ?? entry.printer_id;
-
-    // Only expire while the printer is still idle and unclaimed — if a print
-    // started, the window simply ends and the dashboard takes over.
     const row = await getPrinterRow(entry.printer_id);
     if (!row || row.status !== "idle" || row.active_user_id) continue;
 
-    console.log(`[watchdog] claim window expired: user ${entry.user_id} on ${printerName}`);
-    await expireHead(entry, printerName);
+    const cfg = PRINTER_CONFIG.find((p) => p.supabaseId === entry.printer_id);
+    console.log(`[watchdog] claim window expired: user ${entry.user_id} on ${cfg?.name ?? entry.printer_id}`);
+    await expireHead(entry);
   }
 }
 
