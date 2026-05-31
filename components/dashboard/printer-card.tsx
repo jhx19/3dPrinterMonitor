@@ -47,17 +47,21 @@ export interface PrinterCardProps {
   printerName: string;
   status: PrinterStatus;
   timeRemainingMinutes: number | null;
-  filamentLevel: number | null;
   updatedAt: string | null;
   showStaleWarning: boolean;
   waiters: QueueWaiter[];
   currentUserId: string | null;
+  /** Name of the person currently printing (claimed via "I've Started"), if any. */
+  activeUserName: string | null;
+  /** True when the current user is the one printing. */
+  isActiveUser: boolean;
   isJoiningQueue: boolean;
   isLeavingQueue: boolean;
   isStartingPrint: boolean;
   alreadyInQueue: boolean;
   isBanned: boolean;
   actionError: string | null;
+  queueLimit: number;
   onJoinQueue: () => Promise<void>;
   onLeaveQueue: () => Promise<void>;
   onIveStarted: () => Promise<void>;
@@ -90,7 +94,7 @@ const statusPanelClass: Record<PrinterStatus, string> = {
   error: "border-red-200 bg-red-50",
 };
 
-const NO_SHOW_MS = 10 * 60 * 1000;
+const CLAIM_WINDOW_MS = 10 * 60 * 1000;
 
 function formatUpdatedLabel(updatedAtMs: number | null, now: number) {
   if (updatedAtMs === null) return "No update yet";
@@ -109,75 +113,76 @@ export function PrinterCard({
   printerName,
   status,
   timeRemainingMinutes,
-  filamentLevel,
   updatedAt,
   showStaleWarning,
   waiters,
   currentUserId,
+  activeUserName,
+  isActiveUser,
   isJoiningQueue,
   isLeavingQueue,
   isStartingPrint,
   alreadyInQueue,
   isBanned,
   actionError,
+  queueLimit,
   onJoinQueue,
   onLeaveQueue,
   onIveStarted,
 }: PrinterCardProps) {
-  const activeSlots = waiters.slice(0, 2);
-  const waitlist = waiters.slice(2);
   const config = statusConfig[status];
-
   const slot1 = waiters[0] ?? null;
-  const isMyTurn =
-    slot1 !== null &&
-    slot1.userId === currentUserId &&
-    status === "idle" &&
-    slot1.startedAt === null;
+  const queueFull = waiters.length >= queueLimit;
+
+  // A claim window is open whenever the printer is idle and the head has been notified.
+  // This is visible to everyone, not just the head themselves.
+  const headHasWindow =
+    status === "idle" && slot1 !== null && slot1.notifiedAt !== null;
+
+  // Is the current user the one whose claim window is open?
+  const isMyTurn = headHasWindow && slot1?.userId === currentUserId;
+
+  // Once the printer is printing and nobody has claimed it, every queue member
+  // sees "I've Started" — the button is the only signal of who actually started.
+  const canClaim =
+    status === "printing" && !activeUserName && alreadyInQueue && !isActiveUser;
 
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    if (!isMyTurn) return;
+    if (!headHasWindow) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [isMyTurn]);
+  }, [headHasWindow]);
 
-  const turnStartMs = isMyTurn && slot1?.notifiedAt ? Date.parse(slot1.notifiedAt) : null;
+  const windowStartMs = headHasWindow && slot1?.notifiedAt ? Date.parse(slot1.notifiedAt) : null;
   const remainingMs =
-    turnStartMs !== null
-      ? Math.max(0, NO_SHOW_MS - (now - turnStartMs))
+    windowStartMs !== null
+      ? Math.max(0, CLAIM_WINDOW_MS - (now - windowStartMs))
       : null;
   const updatedAtMs = updatedAt ? Date.parse(updatedAt) : null;
   const updatedLabel = formatUpdatedLabel(updatedAtMs, now);
-  const isStale = showStaleWarning && (updatedAtMs === null || now - updatedAtMs > 2 * 60 * 1000);
-  const isLowFilament = filamentLevel !== null && filamentLevel <= 20;
+  const isStale =
+    showStaleWarning && (updatedAtMs === null || now - updatedAtMs > 2 * 60 * 1000);
+
   const primaryLabel =
     status === "error"
-      ? "Error"
-      : isMyTurn
-        ? "Ready for you"
-        : status === "idle"
-          ? activeSlots.length === 0
-            ? "Ready now"
-            : "Available"
-          : timeRemainingMinutes !== null
-            ? `${formatTime(timeRemainingMinutes)} left`
-            : "In use";
+      ? "Printer needs attention"
+      : status === "idle"
+        ? "Available"
+        : timeRemainingMinutes !== null
+          ? `${formatTime(timeRemainingMinutes)} left`
+          : "In use";
   const primaryDetail =
-    status === "error" && slot1
-      ? `${slot1.displayName}'s job needs a check`
-      : status === "error"
-        ? "Check the printer before joining"
-        : isMyTurn
-          ? "Confirm when you start your print"
-          : status === "idle"
-            ? activeSlots.length === 0
-              ? "No one is waiting"
-              : `${activeSlots.length} in queue`
-            : slot1
-              ? `Current job: ${slot1.displayName}`
-              : "Current job in progress";
+    status === "error"
+      ? "Check the printer in the makerspace"
+      : status === "idle"
+        ? waiters.length === 0
+          ? "No one is waiting"
+          : `${waiters.length} in queue`
+        : activeUserName
+          ? `In use by ${activeUserName}`
+          : "Print in progress";
 
   const leaveButton = (
     <AlertDialog>
@@ -205,6 +210,16 @@ export function PrinterCard({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+
+  const iveStartedButton = (
+    <Button
+      className="min-h-11 w-full shrink-0 flex-1 bg-amber-500 hover:bg-amber-600"
+      onClick={() => void onIveStarted()}
+      disabled={isStartingPrint}
+    >
+      {isStartingPrint ? "Confirming…" : "I've Started"}
+    </Button>
   );
 
   return (
@@ -244,51 +259,17 @@ export function PrinterCard({
           </div>
         </div>
 
-        <div className="space-y-2">
-          {filamentLevel !== null && (
-            <div
-              className={cn(
-                "flex items-center gap-2.5 rounded-md px-0.5",
-                isLowFilament && "border border-red-200 bg-red-50 px-3 py-2",
-              )}
-            >
-              <span
-                className={cn(
-                  "w-14 shrink-0 text-xs text-muted-foreground",
-                  isLowFilament && "text-red-700",
-                )}
-              >
-                Filament
-              </span>
-              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-                <div
-                  className={cn("h-full rounded-full", isLowFilament ? "bg-red-500" : "bg-zinc-400")}
-                  style={{ width: `${filamentLevel}%` }}
-                />
-              </div>
-              <span
-                className={cn(
-                  "w-8 shrink-0 text-right text-xs tabular-nums text-muted-foreground",
-                  isLowFilament && "font-medium text-red-700",
-                )}
-              >
-                {filamentLevel}%
-              </span>
-            </div>
-          )}
-        </div>
-
         <section className="space-y-2">
           <h3 className="text-sm font-medium text-muted-foreground">
-            Queue ({activeSlots.length}/2)
+            Queue ({waiters.length}/{queueLimit})
           </h3>
-          {activeSlots.length === 0 ? (
+          {waiters.length === 0 ? (
             <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
               No one is waiting. Join now to be first in line.
             </p>
           ) : (
             <ul className="space-y-2">
-              {activeSlots.map((w, i) => (
+              {waiters.map((w, i) => (
                 <li
                   key={w.id}
                   className={`flex items-center gap-2.5 rounded-md border px-2.5 py-2 text-xs ${
@@ -300,13 +281,14 @@ export function PrinterCard({
                   <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-bold text-muted-foreground">
                     {i + 1}
                   </span>
-                  <span className="flex-1 truncate">
-                    {w.userId === currentUserId ? "You" : w.displayName}
-                    {i === 0 && status === "printing" && (
-                      <span className="ml-1.5 text-muted-foreground">&middot; printing</span>
-                    )}
-                    {i === 0 && status === "idle" && w.startedAt === null && w.notifiedAt && (
-                      <span className="ml-1.5 text-muted-foreground">&middot; waiting to start</span>
+                  <span className="flex-1 min-w-0 flex items-center gap-1.5 truncate">
+                    <span className="truncate">
+                      {w.userId === currentUserId ? "You" : w.displayName}
+                    </span>
+                    {i === 0 && headHasWindow && remainingMs !== null && (
+                      <span className="shrink-0 font-mono tabular-nums text-amber-600 font-semibold">
+                        {formatCountdown(remainingMs)}
+                      </span>
                     )}
                   </span>
                 </li>
@@ -314,59 +296,38 @@ export function PrinterCard({
             </ul>
           )}
         </section>
-
-        {waitlist.length > 0 && (
-          <section className="space-y-2">
-            <h3 className="text-sm font-medium text-muted-foreground">
-              Waitlist ({waitlist.length})
-            </h3>
-            <ul className="space-y-2">
-              {waitlist.map((w, i) => (
-                <li
-                  key={w.id}
-                  className={`flex items-center gap-2.5 rounded-md border px-2.5 py-2 text-xs ${
-                    w.userId === currentUserId
-                      ? "border-border bg-muted/60 font-medium"
-                      : "border-border"
-                  }`}
-                >
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-bold text-muted-foreground">
-                    {i + activeSlots.length + 1}
-                  </span>
-                  <span className="flex-1 truncate">{w.userId === currentUserId ? "You" : w.displayName}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
       </CardContent>
 
       <CardFooter className="mt-auto pt-0">
         <div className="w-full space-y-2">
-          {isMyTurn ? (
+          {isActiveUser ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              You&apos;re printing on this machine now.
+            </div>
+          ) : isMyTurn ? (
             <div className="space-y-2">
               <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-1.5 font-semibold">
-                    <Timer className="size-4" />
-                    It&apos;s your turn
-                  </span>
-                  {remainingMs !== null && (
-                    <span className="font-mono text-sm font-bold tabular-nums">
-                      {formatCountdown(remainingMs)}
-                    </span>
-                  )}
-                </div>
+                <span className="flex items-center gap-1.5 font-semibold">
+                  <Timer className="size-4" />
+                  It&apos;s your turn — go start your print
+                </span>
+                <p className="mt-1 text-xs">
+                  Confirm here once the printer is running.
+                </p>
+              </div>
+              {leaveButton}
+            </div>
+          ) : canClaim ? (
+            <div className="space-y-2">
+              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                <span className="flex items-center gap-1.5 font-semibold">
+                  <Timer className="size-4" />
+                  Started this print? Confirm it&apos;s you.
+                </span>
               </div>
               <div className="flex w-full flex-col gap-2 sm:flex-row">
                 <div className="flex-1">{leaveButton}</div>
-                <Button
-                  className="min-h-11 w-full shrink-0 flex-1 bg-amber-500 hover:bg-amber-600"
-                  onClick={() => void onIveStarted()}
-                  disabled={isStartingPrint}
-                >
-                  {isStartingPrint ? "Confirming…" : "I've Started"}
-                </Button>
+                {iveStartedButton}
               </div>
             </div>
           ) : alreadyInQueue ? (
@@ -384,13 +345,15 @@ export function PrinterCard({
             <Button
               className="h-11 w-full"
               onClick={() => void onJoinQueue()}
-              disabled={isJoiningQueue}
+              disabled={isJoiningQueue || (Boolean(currentUserId) && queueFull)}
             >
               {isJoiningQueue
                 ? "Joining…"
                 : !currentUserId
                   ? "Sign in to join queue"
-                  : "Join Queue"}
+                  : queueFull
+                    ? `Queue full (${waiters.length}/${queueLimit})`
+                    : "Join Queue"}
             </Button>
           )}
           {actionError && <p className="text-xs text-red-600">{actionError}</p>}

@@ -10,6 +10,8 @@ export interface Database {
           status: PrinterStatus | string | null;
           time_remaining: number | null;
           filament_level: number | null;
+          error_code: string | null;
+          active_user_id: string | null;
           updated_at: string | null;
           [key: string]: unknown;
         };
@@ -19,6 +21,8 @@ export interface Database {
           status?: PrinterStatus | string | null;
           time_remaining?: number | null;
           filament_level?: number | null;
+          error_code?: string | null;
+          active_user_id?: string | null;
           updated_at?: string | null;
           [key: string]: unknown;
         };
@@ -28,6 +32,8 @@ export interface Database {
           status?: PrinterStatus | string | null;
           time_remaining?: number | null;
           filament_level?: number | null;
+          error_code?: string | null;
+          active_user_id?: string | null;
           updated_at?: string | null;
           [key: string]: unknown;
         };
@@ -107,7 +113,10 @@ export interface Database {
       [_ in never]: never;
     };
     Functions: {
-      [_ in never]: never;
+      claim_printer: {
+        Args: { p_printer_id: string };
+        Returns: undefined;
+      };
     };
     Enums: {
       [_ in never]: never;
