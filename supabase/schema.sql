@@ -20,9 +20,15 @@ create table if not exists public.printers (
   name           text not null,
   status         text not null default 'idle',
   time_remaining integer,
-  filament_level integer,
+  filament_level integer,                                          -- kept for back-compat; no longer written by the poller
+  error_code     text,                                             -- raw Bambu error code when status = error (mapping to text is future work)
+  active_user_id uuid references public.profiles(id) on delete set null, -- who is currently printing (claimed via "I've Started")
   updated_at     timestamptz
 );
+
+-- Existing databases: add the new columns if the table predates them.
+alter table public.printers add column if not exists error_code     text;
+alter table public.printers add column if not exists active_user_id uuid references public.profiles(id) on delete set null;
 
 create table if not exists public.profiles (
   id          uuid primary key references auth.users(id) on delete cascade,
@@ -92,6 +98,56 @@ returns boolean language sql security definer set search_path = public as $$
     where id = auth.uid() and role = 'ta'
   );
 $$;
+
+-- ── Queue size limit (max 3 per printer) ─────────────────────────────────────
+create or replace function public.enforce_queue_limit()
+returns trigger language plpgsql as $$
+begin
+  if (select count(*) from public.queues where printer_id = new.printer_id) >= 3 then
+    raise exception 'Queue is full (max 3)';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists queue_limit on public.queues;
+create trigger queue_limit
+  before insert on public.queues
+  for each row execute function public.enforce_queue_limit();
+
+-- ── Claim a printer ("I've Started") ──────────────────────────────────────────
+-- Clients cannot write public.printers directly (RLS limits writes to TAs), so
+-- claiming goes through this SECURITY DEFINER function. The caller must be in the
+-- printer's queue and the printer must not already have an active user. On success
+-- the caller becomes active_user_id and is removed from the waitlist.
+create or replace function public.claim_printer(p_printer_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null then
+    raise exception 'Not authenticated';
+  end if;
+  if not exists (
+    select 1 from public.queues
+    where printer_id = p_printer_id and user_id = v_uid
+  ) then
+    raise exception 'You are not in this queue';
+  end if;
+
+  update public.printers
+    set active_user_id = v_uid
+    where id = p_printer_id and active_user_id is null;
+  if not found then
+    raise exception 'Printer already claimed';
+  end if;
+
+  delete from public.queues
+    where printer_id = p_printer_id and user_id = v_uid;
+end;
+$$;
+
+grant execute on function public.claim_printer(uuid) to authenticated;
 
 -- ── Row Level Security ────────────────────────────────────────────────────────
 alter table public.printers        enable row level security;
