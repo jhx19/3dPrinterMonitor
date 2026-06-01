@@ -424,6 +424,24 @@ function connectPrinter(printer) {
   client.on("offline", () => console.warn(`[${printer.name}] offline`));
 }
 
+// ─── Audit: watch for active_user_id being cleared ────────────────────────────
+
+supabase
+  .channel("audit-active-user")
+  .on("postgres_changes", { event: "UPDATE", schema: "public", table: "printers" }, (payload) => {
+    const wasSet = payload.old?.active_user_id;
+    const nowNull = !payload.new?.active_user_id;
+    if (wasSet && nowNull) {
+      const cfg = PRINTER_CONFIG.find((p) => p.supabaseId === payload.new.id);
+      console.warn(
+        `[AUDIT] active_user_id CLEARED on ${cfg?.name ?? payload.new.id}` +
+        `  status: ${payload.old?.status} → ${payload.new?.status}` +
+        `  lastStatus: ${lastStatus[payload.new.id]}`
+      );
+    }
+  })
+  .subscribe();
+
 // ─── Main ──────────────────────────────────────────────────────────────────────
 
 console.log("Bambu Poller starting — connecting to", PRINTER_CONFIG.length, "printers");
