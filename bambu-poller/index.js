@@ -68,6 +68,10 @@ for (const p of PRINTER_CONFIG) lastStatus[p.supabaseId] = null;
 // Per-printer sequential queues — prevents race conditions from concurrent MQTT messages.
 const printerQueues = {};
 
+// Tracks printers currently in the debounce window (printing→non-printing transition).
+// Any non-printing message while in this set is treated as a blip and delayed.
+const inPrintingDebounce = new Set();
+
 // Debounce timers for printing→idle/error transitions.
 // Bambu printers sometimes blip idle/error briefly mid-print; we wait before acting.
 const printingEndTimers = {};  // business logic (active_user_id, notify)
@@ -231,13 +235,14 @@ async function handleTransition(printer, newStatus) {
     return;
   }
 
-  // If printer recovered back to printing, cancel any pending end-of-print logic.
+  // If printer recovered back to printing, cancel all pending timers.
   if (newStatus === "printing") {
     if (printingEndTimers[printer.supabaseId]) {
       console.log(`[${printer.name}] print resumed — cancelling end-of-print timer`);
       clearTimeout(printingEndTimers[printer.supabaseId]);
       delete printingEndTimers[printer.supabaseId];
     }
+    inPrintingDebounce.delete(printer.supabaseId);
     return;
   }
 
@@ -287,9 +292,16 @@ async function updatePrinter(printer, printPayload) {
 
   const prev = lastStatus[printer.supabaseId];
 
-  // Debounce printing→idle/error blips: Bambu printers sometimes briefly report
-  // idle or error mid-print. Delay the status DB write by 10 s; cancel if recovered.
-  if (prev === "printing" && (status === "idle" || status === "error")) {
+  // Debounce printing→idle/error blips.
+  // Once a printer enters the debounce window (printing→non-printing), ALL subsequent
+  // non-printing messages are also debounced until the window closes. This prevents
+  // the second non-printing message from bypassing the debounce after lastStatus is updated.
+  const inDebounce = inPrintingDebounce.has(printer.supabaseId);
+  const shouldDebounce = (prev === "printing" || inDebounce) && status !== "printing";
+
+  if (shouldDebounce) {
+    inPrintingDebounce.add(printer.supabaseId);
+
     // Always update time_remaining immediately for UI accuracy.
     await supabase
       .from("printers")
@@ -299,21 +311,25 @@ async function updatePrinter(printer, printPayload) {
     clearTimeout(statusWriteTimers[printer.supabaseId]);
     statusWriteTimers[printer.supabaseId] = setTimeout(async () => {
       delete statusWriteTimers[printer.supabaseId];
+      inPrintingDebounce.delete(printer.supabaseId);
       const current = lastStatus[printer.supabaseId];
-      if (current === "printing") return; // recovered — skip
+      if (current === "printing") return;
       console.log(`[${printer.name}] ${current} confirmed — writing status to DB`);
       await supabase
         .from("printers")
-        .update({ status: current, error_code: errorCode, updated_at: new Date().toISOString() })
+        .update({ status: current, error_code: current === "error" ? errorCode : null, updated_at: new Date().toISOString() })
         .eq("id", printer.supabaseId);
     }, 10_000);
 
     console.log(`[${printer.name}] ${status} (debouncing)  ${timeRemaining ?? "?"}m remaining`);
   } else {
-    // Cancel any pending debounce if printer resumed printing.
-    if (statusWriteTimers[printer.supabaseId]) {
-      clearTimeout(statusWriteTimers[printer.supabaseId]);
-      delete statusWriteTimers[printer.supabaseId];
+    // Printer returned to printing — clear debounce window and timers.
+    if (status === "printing") {
+      inPrintingDebounce.delete(printer.supabaseId);
+      if (statusWriteTimers[printer.supabaseId]) {
+        clearTimeout(statusWriteTimers[printer.supabaseId]);
+        delete statusWriteTimers[printer.supabaseId];
+      }
     }
 
     const { error } = await supabase
