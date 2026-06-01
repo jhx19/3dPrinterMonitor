@@ -340,9 +340,9 @@ async function claimWindowWatchdog() {
     }
   }
 
-  // 2. Clear stale active_user_id: non-printing printers that have had no MQTT update
-  //    for 2+ minutes — long enough to rule out brief idle/error blips mid-print.
-  const staleThreshold = new Date(Date.now() - 2 * 60_000).toISOString();
+  // 2. Clear stale active_user_id: non-printing printers with no MQTT update for 30+ min.
+  //    30 min covers filament changes and long pauses without falsely dropping the claim.
+  const staleThreshold = new Date(Date.now() - 30 * 60_000).toISOString();
   const { data: stale } = await supabase
     .from("printers")
     .select("id")
