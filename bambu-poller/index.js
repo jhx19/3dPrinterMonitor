@@ -252,9 +252,17 @@ async function handleTransition(printer, newStatus) {
     clearTimeout(printingEndTimers[printer.supabaseId]);
     printingEndTimers[printer.supabaseId] = setTimeout(async () => {
       delete printingEndTimers[printer.supabaseId];
-      const current = lastStatus[printer.supabaseId];
-      if (current === "printing") return; // recovered within the window
+      if (lastStatus[printer.supabaseId] === "printing") return;
 
+      // Double-check DB status before clearing — MQTT lastStatus and DB can diverge
+      // if a race condition slipped through. Never clear while DB says printing.
+      const dbRow = await getPrinterRow(printer.supabaseId);
+      if (!dbRow || dbRow.status === "printing") {
+        console.log(`[${printer.name}] DB still printing — skipping active_user_id clear`);
+        return;
+      }
+
+      const current = lastStatus[printer.supabaseId];
       console.log(`[${printer.name}] print end confirmed (${current}) — clearing active_user_id`);
       await supabase
         .from("printers")
@@ -384,6 +392,9 @@ async function claimWindowWatchdog() {
     .lt("updated_at", staleThreshold);
 
   for (const p of stale ?? []) {
+    // Re-read status at clear time — lastStatus may have recovered since the query.
+    const row = await getPrinterRow(p.id);
+    if (!row || row.status === "printing") continue;
     console.log(`[watchdog] clearing stale active_user_id on printer ${p.id}`);
     await supabase.from("printers").update({ active_user_id: null }).eq("id", p.id);
   }
