@@ -370,29 +370,7 @@ async function claimWindowWatchdog() {
     if (row.status === "idle" && cfg) await reconcileClaimWindow(cfg);
   }
 
-  // 3. Force-idle printers stuck at printing + time_remaining=0 with no MQTT for 15+ min.
-  //    Happens when the MQTT connection drops right as the print finishes (gcode FINISH
-  //    message never arrives), leaving the printer frozen as "printing" at 0 min.
-  const zeroStaleThreshold = new Date(Date.now() - 15 * 60_000).toISOString();
-  const { data: stuckPrinting } = await supabase
-    .from("printers")
-    .select("id, active_user_id")
-    .eq("status", "printing")
-    .eq("time_remaining", 0)
-    .lt("updated_at", zeroStaleThreshold);
-
-  for (const p of stuckPrinting ?? []) {
-    const cfg = PRINTER_CONFIG.find((c) => c.supabaseId === p.id);
-    console.log(`[watchdog] printer ${cfg?.name ?? p.id} stuck at 0 min for 15+ min — forcing idle`);
-    await supabase
-      .from("printers")
-      .update({ status: "idle", time_remaining: null, active_user_id: null, updated_at: new Date().toISOString() })
-      .eq("id", p.id);
-    await supabase.from("queues").update({ notified_at: null }).eq("printer_id", p.id);
-    if (cfg) await reconcileClaimWindow(cfg);
-  }
-
-  // 4. Reconcile missed windows: idle printers whose queue head has no notified_at.
+  // 3. Reconcile missed windows: idle printers whose queue head has no notified_at.
   //    This happens when someone joins an already-idle printer (no MQTT transition).
   //    We set notified_at for the countdown display but do NOT send email —
   //    the user can already see the printer is available on the dashboard.
