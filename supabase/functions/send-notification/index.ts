@@ -78,7 +78,7 @@ async function handleQueueNotified(record: Record<string, unknown>) {
   await sendEmail(
     user.email,
     `${printerName} is available — head over now`,
-    `Hi ${name},\n\n${printerName} is now free and it's your turn.\n\nYou have 5 minutes to go to the makerspace and start your print.\nOnce the printer is running, open the GIX Printer Hub and confirm:\n${DASHBOARD_URL}\n\nIf no print starts within 5 minutes, your spot passes to the next person.\n\nGIX Makerspace`,
+    `Hi ${name},\n\n${printerName} is available — head over to the makerspace now.\n\nYou have 5 minutes to start your print.\nOnce the printer is running, open the GIX Printer Hub and confirm:\n${DASHBOARD_URL}\n\nIf no print starts within 5 minutes, your spot passes to the next person.\n\nGIX Makerspace`,
   );
 }
 
