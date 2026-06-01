@@ -154,7 +154,7 @@ export function PrinterCard({
 
   const primaryLabel =
     status === "error"
-      ? "Needs attention"
+      ? (errorMessage ?? "Needs attention")
       : status === "idle"
         ? "Available"
         : timeRemainingMinutes !== null
@@ -162,7 +162,7 @@ export function PrinterCard({
           : "In use";
   const primaryDetail =
     status === "error"
-      ? (errorMessage ?? "Check the printer in the makerspace")
+      ? (errorMessage ? "Needs attention" : "Check the printer in the makerspace")
       : status === "idle"
         ? waiters.length === 0
           ? "No one is waiting"

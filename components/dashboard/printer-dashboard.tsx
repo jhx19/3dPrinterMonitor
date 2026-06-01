@@ -46,10 +46,13 @@ interface PrinterViewModel {
 }
 
 const MOCK_USER_ID = "preview-user";
-const MOCK_NOW = "2026-05-28T02:15:00.000Z";
+const MOCK_NOW = new Date().toISOString();
+// 2 minutes into the 5-minute claim window → countdown shows ~3 min remaining
+const MOCK_NOTIFIED_AT = new Date(Date.now() - 2 * 60 * 1000).toISOString();
 
 const mockPrinters: PrinterViewModel[] = [
   {
+    // MOREL: idle, someone else waiting → plain Join waitlist
     id: "mock-printer-1",
     name: "MOREL",
     status: "idle",
@@ -59,72 +62,75 @@ const mockPrinters: PrinterViewModel[] = [
     updatedAt: MOCK_NOW,
   },
   {
+    // TURKEY TAIL: printing, claimed by Alex, you're in queue
     id: "mock-printer-2",
     name: "TURKEY TAIL",
     status: "printing",
-    timeRemainingMinutes: 47,
+    timeRemainingMinutes: 94,
     errorMessage: null,
-    activeUserId: null,
-    updatedAt: "2026-05-28T02:14:00.000Z",
+    activeUserId: "mock-alex",
+    updatedAt: MOCK_NOW,
   },
   {
+    // FLY AGARIC: error with specific reason → shows error type prominently
     id: "mock-printer-3",
     name: "FLY AGARIC",
     status: "error",
     timeRemainingMinutes: null,
     errorMessage: "Filament issue",
     activeUserId: null,
-    updatedAt: "2026-05-28T02:11:00.000Z",
+    updatedAt: MOCK_NOW,
   },
   {
+    // SHIITAKE: idle, your claim window is open → amber alert + countdown
     id: "mock-printer-4",
     name: "SHIITAKE",
     status: "idle",
     timeRemainingMinutes: null,
     errorMessage: null,
     activeUserId: null,
-    updatedAt: "2026-05-28T02:14:30.000Z",
+    updatedAt: MOCK_NOW,
   },
 ];
 
 const mockQueues: QueueRow[] = [
-  // shitake: you are head with an active claim window (idle → countdown)
+  // MOREL: Sam is waiting (you're not in this queue → Join waitlist button)
   {
     id: "mock-queue-1",
     printer_id: "mock-printer-1",
-    user_id: MOCK_USER_ID,
+    user_id: "mock-sam",
     tier: "active",
-    created_at: "2026-05-28T02:07:00.000Z",
-    notified_at: "2026-05-28T02:12:00.000Z",
+    created_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    notified_at: null,
     started_at: null,
   },
-  // morel: printing + unclaimed → everyone in queue sees "I've Started"
+  // TURKEY TAIL: Mina is #1, you are #2 (Alex already started without notifiedAt flow)
   {
     id: "mock-queue-2",
     printer_id: "mock-printer-2",
-    user_id: MOCK_USER_ID,
+    user_id: "mock-mina",
     tier: "active",
-    created_at: "2026-05-28T01:55:00.000Z",
+    created_at: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
     notified_at: null,
     started_at: null,
   },
   {
     id: "mock-queue-3",
     printer_id: "mock-printer-2",
-    user_id: "mock-mina",
+    user_id: MOCK_USER_ID,
     tier: "active",
-    created_at: "2026-05-28T02:05:00.000Z",
+    created_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
     notified_at: null,
     started_at: null,
   },
-  // fly agaric: error, someone else waiting
+  // SHIITAKE: you are head with active claim window → amber alert + countdown
   {
     id: "mock-queue-4",
-    printer_id: "mock-printer-3",
-    user_id: "mock-sam",
+    printer_id: "mock-printer-4",
+    user_id: MOCK_USER_ID,
     tier: "active",
-    created_at: "2026-05-28T02:13:00.000Z",
-    notified_at: null,
+    created_at: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
+    notified_at: MOCK_NOTIFIED_AT,
     started_at: null,
   },
 ];
@@ -170,6 +176,7 @@ export function PrinterDashboard() {
   const [actionErrors, setActionErrors] = useState<Record<string, string | null>>({});
   const [dismissedClaimPrinters, setDismissedClaimPrinters] = useState<Set<string>>(new Set());
   const loadDataTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevPrinterStatuses = useRef<Map<string, string>>(new Map());
 
   const loadData = useCallback(async () => {
     if (!supabase) return;
@@ -287,6 +294,25 @@ export function PrinterDashboard() {
       void supabase.removeChannel(queueChannel);
     };
   }, [loadData, supabase]);
+
+  // When a printer's status changes (e.g. printing → error → printing), clear any
+  // previous dismissal so the claim modal can re-appear for the new print session.
+  useEffect(() => {
+    const changed: string[] = [];
+    for (const p of printers) {
+      const prev = prevPrinterStatuses.current.get(p.id);
+      if (prev !== undefined && prev !== p.status) changed.push(p.id);
+    }
+    if (changed.length > 0) {
+      setDismissedClaimPrinters((prev) => {
+        if (!changed.some((id) => prev.has(id))) return prev;
+        const next = new Set(prev);
+        for (const id of changed) next.delete(id);
+        return next;
+      });
+    }
+    prevPrinterStatuses.current = new Map(printers.map((p) => [p.id, p.status]));
+  }, [printers]);
 
   const userId = isPreviewMode
     ? MOCK_USER_ID

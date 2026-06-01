@@ -236,6 +236,16 @@ async function handleTransition(printer, newStatus) {
 
   if (newStatus === "printing") {
     inPrintingDebounce.delete(printer.supabaseId);
+    // If coming back from error without going through idle, the queue head may
+    // never have been notified. Notify them now so the claim modal can appear.
+    if (prev === "error") {
+      const queue = await getQueue(printer.supabaseId);
+      const head = queue[0];
+      if (head && !head.notified_at) {
+        console.log(`[${printer.name}] error→printing: notifying queue head ${head.user_id}`);
+        await startClaimWindow(head, true);
+      }
+    }
     return;
   }
 
