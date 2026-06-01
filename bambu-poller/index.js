@@ -354,13 +354,15 @@ async function claimWindowWatchdog() {
     }
   }
 
-  // 2. Clear stale active_user_id: any non-printing printer that still has one set
-  //    means the poller missed the print-end transition (e.g. restarted mid-print).
+  // 2. Clear stale active_user_id: non-printing printers that have had no MQTT update
+  //    for 2+ minutes — long enough to rule out brief idle/error blips mid-print.
+  const staleThreshold = new Date(Date.now() - 2 * 60_000).toISOString();
   const { data: stale } = await supabase
     .from("printers")
     .select("id")
     .neq("status", "printing")
-    .not("active_user_id", "is", null);
+    .not("active_user_id", "is", null)
+    .lt("updated_at", staleThreshold);
 
   for (const p of stale ?? []) {
     console.log(`[watchdog] clearing stale active_user_id on printer ${p.id}`);
