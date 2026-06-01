@@ -150,7 +150,7 @@ function ProfileSetupForm() {
               <input
                 id="studentId"
                 type="text"
-                placeholder="e.g. suhyung"
+                placeholder="e.g. jdoe"
                 value={studentId}
                 onChange={(event) => setStudentId(event.target.value)}
                 required
