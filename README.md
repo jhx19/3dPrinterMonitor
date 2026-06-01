@@ -1,6 +1,6 @@
-# GIX Lab 3D Printer Hub
+# GIX 3D Printer Hub
 
-**Live app: [[printermonitor-git-main-jason-jin-s-projects.vercel.app](https://printermonitor-qa4vpp5s6-jason-jin-s-projects.vercel.app/)](https://printermonitor-jason-jin-s-projects.vercel.app/dashboard)**
+**Live app: [printermonitor-jason-jin-s-projects.vercel.app](https://printermonitor-jason-jin-s-projects.vercel.app/dashboard)**
 
 A real-time dashboard and soft coordination queue for the GIX Prototyping Lab's four Bambu Lab X1 Carbon printers. Students can check printer availability remotely, join a waitlist, and receive email notifications when it's their turn — without physically camping in the lab.
 
@@ -56,7 +56,7 @@ The system is a **soft coordination tool, not an access-control gate**. Printers
 | Check-in 1 | April 20, 2026 | Architecture PR submitted. Bambu API connected. Basic dashboard UI. Auth working. | Partial. Dashboard, queue structure, Realtime, auth, and profile setup all implemented. Bambu poller requires real LAN access. Issues: [#2](../../issues/2), [#3](../../issues/3), [#4](../../issues/4), [#13](../../issues/13), [#14](../../issues/14). |
 | Check-in 2 | May 4, 2026 | Queue fully functional. Notifications firing. No-show detection and strike recording working. | Complete. Queue with 3-person cap, 10-min countdown, claim flow, and email notifications via Supabase Edge Function all implemented. Issues: [#5](../../issues/5), [#6](../../issues/6), [#7](../../issues/7). |
 | Check-in 3 | May 18, 2026 | TA admin panel complete. Penalty management working. All Must-have issues closed. | Partial. Schema includes TA roles, strikes, and no-show records. Admin page UI not implemented. Issue: [#8](../../issues/8). |
-| Final Delivery | June 1, 2026 | All features complete and tested. App deployed and demo-ready. | In progress. Dashboard, auth, queue, poller, and notifications are fully functional. TA admin UI remains open. Issues: [#2](../../issues/2), [#8](../../issues/8), [#9](../../issues/9). |
+| Final Delivery | June 1, 2026 | All features complete and tested. App deployed and demo-ready. | Complete. Dashboard, auth, queue, poller, and notifications fully functional and deployed. TA admin UI out of scope for final. Issues: [#8](../../issues/8). |
 
 ---
 
@@ -65,11 +65,11 @@ The system is a **soft coordination tool, not an access-control gate**. Printers
 The queue is a notification-assisted waitlist, not a reservation lock.
 
 1. A student joins the waitlist for a printer (max 3 per printer).
-2. When the printer becomes available, the head of the queue receives an email and a 10-minute countdown starts.
+2. When the printer becomes available, the head of the queue receives an email and a 5-minute countdown starts.
 3. The countdown is visible to everyone on the dashboard next to the head's name.
-4. If the printer status changes to **printing** within 10 minutes, the countdown ends. Every person in the queue sees an **"I've Started"** button — because the app cannot know who physically started the print.
-5. Whoever clicks "I've Started" is recorded as the current user and removed from the queue. Their name appears next to the remaining time on the card.
-6. If no print starts within 10 minutes, the head is removed from the queue (email notification sent), and the next person enters their 10-minute window.
+4. If the printer status changes to **printing** within 5 minutes, the countdown ends. The notified user sees a confirmation modal — "Did you start this print?" — and confirms or dismisses.
+5. Whoever confirms is recorded as the current user and removed from the queue. Their name appears next to the remaining time on the card.
+6. If no print starts within 5 minutes, the head is removed from the queue (email notification sent), and the next person enters their 5-minute window.
 7. When the print ends (or errors), the active user receives an email. `active_user_id` is cleared and the cycle restarts for the next person in queue.
 
 **No automatic bans.** Missed turns increment a strike counter for TA reference, but never lock a student out of the system.
@@ -81,11 +81,11 @@ The queue is a notification-assisted waitlist, not a reservation lock.
 ### Implemented
 
 - Real-time dashboard for all 4 Bambu Lab X1C printers (MOREL, TURKEY TAIL, FLY AGARIC, SHIITAKE)
-- Live printer status: Available, In use (with remaining time), Error (with fallback "Printer needs attention" message)
+- Live printer status: Available, In use (with remaining time and estimated end time), Error (with specific error reason: Filament issue, AMS issue, etc.)
 - Stale data warning when telemetry is older than 2 minutes
 - Per-printer waitlist capped at 3 students, enforced by frontend and DB trigger
-- 10-minute claim countdown displayed to all queue members
-- "I've Started" button visible to all queue members when printer is printing and unclaimed
+- 5-minute claim countdown displayed to all queue members
+- Confirmation modal shown to notified queue head when printer starts printing — confirms who started the print
 - Active user display next to remaining time once someone claims the print
 - Email notifications via Supabase Edge Function:
   - "It's your turn" — when printer becomes available after waiting in queue
@@ -95,18 +95,17 @@ The queue is a notification-assisted waitlist, not a reservation lock.
 - No email when joining an already-idle printer with an empty queue (user can see availability directly)
 - Supabase Realtime subscriptions for live dashboard updates
 - Email + password auth with Supabase; UW email recommended
-- Profile setup (name, student ID)
+- Profile setup (name, UW Net ID)
 - Bambu Lab MQTT poller: telemetry polling, status/error code capture, queue lifecycle management, watchdog for missed transitions
 - Poller holds no email credentials — only Supabase service key and printer LAN credentials
 - Student / TA role fields, strikes, no-show records in the data model
 - Local preview mode when Supabase env vars are absent
-- 41 automated tests (Vitest + Testing Library)
+- 40 automated tests (Vitest + Testing Library)
 
 ### Not Yet Implemented
 
 - TA admin page at `/admin` ([#8](../../issues/8))
 - Manual queue override and penalty management UI
-- Mapping Bambu error codes to human-readable messages (currently shows "Printer needs attention" for all errors)
 - Microsoft Teams notifications
 
 ### Out of Scope
@@ -165,7 +164,7 @@ supabase secrets set GMAIL_USER=your@gmail.com
 supabase secrets set GMAIL_APP_PASSWORD="xxxx xxxx xxxx xxxx"
 ```
 
-Then create three Database Webhooks in the Supabase dashboard (Database → Webhooks), all pointing to the Edge Function URL (`https://<ref>.supabase.co/functions/v1/send-notification`) with `Authorization: Bearer <anon key>`:
+Then create two Database Webhooks in the Supabase dashboard (Database → Webhooks), both pointing to the Edge Function URL (`https://<ref>.supabase.co/functions/v1/send-notification`) with `Authorization: Bearer <anon key>`:
 
 | Webhook name | Table | Event |
 |---|---|---|
