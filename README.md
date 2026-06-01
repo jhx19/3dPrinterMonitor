@@ -21,7 +21,7 @@ A live dashboard and notification-assisted waitlist that:
 - Notifies the next student by email when a printer becomes free
 - Gives the head of the queue a 5-minute window to go start their print
 - Lets the notified queue head confirm they started once the printer is printing
-- Handles no-shows, promotes the next person, and records missed turns for TA reference
+- Handles no-shows automatically: removes the head, promotes the next person, and sends a removal email
 
 The system is a **soft coordination tool, not an access-control gate**. Printers are shared school property and students can always walk up and start a print. The app helps coordinate and reduce wasted idle time.
 
@@ -72,7 +72,7 @@ The queue is a notification-assisted waitlist, not a reservation lock.
 6. If no print starts within 5 minutes, the head is removed from the queue (email notification sent), and the next person enters their 5-minute window.
 7. When the print ends (or errors), the active user receives an email. `active_user_id` is cleared and the cycle restarts for the next person in queue.
 
-**No automatic bans.** Missed turns increment a strike counter for TA reference, but never lock a student out of the system.
+**No automatic bans.** Missed turns increment a strike counter in the database, but never lock a student out of the system.
 
 ---
 
@@ -98,7 +98,7 @@ The queue is a notification-assisted waitlist, not a reservation lock.
 - Profile setup (name, UW Net ID)
 - Bambu Lab MQTT poller: telemetry polling, status/error code capture, queue lifecycle management, watchdog for missed transitions
 - Poller holds no email credentials — only Supabase service key and printer LAN credentials
-- Student / TA role fields, strikes, no-show records in the data model
+- No-show records and strike counter incremented automatically when claim window expires (data stored in DB)
 - Local preview mode when Supabase env vars are absent
 - 40 automated tests (Vitest + Testing Library)
 
