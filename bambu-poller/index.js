@@ -69,13 +69,15 @@ for (const p of PRINTER_CONFIG) lastStatus[p.supabaseId] = null;
 const printerQueues = {};
 
 // Tracks printers currently in the debounce window (printing→non-printing transition).
-// Any non-printing message while in this set is treated as a blip and delayed.
 const inPrintingDebounce = new Set();
+
+// Status-write debounce timers only (delays DB status column update during blips).
+// active_user_id clearing is handled exclusively by the watchdog to avoid timer races.
+
 
 // Debounce timers for printing→idle/error transitions.
 // Bambu printers sometimes blip idle/error briefly mid-print; we wait before acting.
-const printingEndTimers = {};  // business logic (active_user_id, notify)
-const statusWriteTimers = {};  // DB status column write
+const statusWriteTimers = {};  // DB status column write (blip debounce)
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -219,68 +221,33 @@ async function reconcileClaimWindow(printer) {
 }
 
 // ─── State-machine handler ─────────────────────────────────────────────────────
+// NOTE: active_user_id clearing is done ONLY by the watchdog (runs every 60s,
+// requires 2+ min of confirmed non-printing in DB). No timers clear it here —
+// timers running outside the sequential queue caused race conditions.
 
 async function handleTransition(printer, newStatus) {
   const prev = lastStatus[printer.supabaseId];
   lastStatus[printer.supabaseId] = newStatus;
 
   if (prev === null) {
-    // First MQTT message after poller startup — clear stale active_user_id if needed.
+    // Poller just started. If printer is idle/error, clear any stale active_user_id
+    // from before the restart (watchdog won't have caught it yet).
     if (newStatus !== "printing") {
-      await supabase
-        .from("printers")
-        .update({ active_user_id: null })
-        .eq("id", printer.supabaseId);
+      const dbRow = await getPrinterRow(printer.supabaseId);
+      if (dbRow && dbRow.status !== "printing" && dbRow.active_user_id) {
+        console.log(`[${printer.name}] startup: clearing stale active_user_id`);
+        await supabase.from("printers").update({ active_user_id: null }).eq("id", printer.supabaseId);
+      }
     }
     return;
   }
 
-  // If printer recovered back to printing, cancel all pending timers.
   if (newStatus === "printing") {
-    if (printingEndTimers[printer.supabaseId]) {
-      console.log(`[${printer.name}] print resumed — cancelling end-of-print timer`);
-      clearTimeout(printingEndTimers[printer.supabaseId]);
-      delete printingEndTimers[printer.supabaseId];
-    }
     inPrintingDebounce.delete(printer.supabaseId);
     return;
   }
 
-  // Debounce printing→idle/error: wait 20 s before treating it as a real print end.
-  // Bambu printers sometimes blip idle briefly mid-print (firmware quirk).
-  if (prev === "printing") {
-    clearTimeout(printingEndTimers[printer.supabaseId]);
-    printingEndTimers[printer.supabaseId] = setTimeout(async () => {
-      delete printingEndTimers[printer.supabaseId];
-      if (lastStatus[printer.supabaseId] === "printing") return;
-
-      // Double-check DB status before clearing — MQTT lastStatus and DB can diverge
-      // if a race condition slipped through. Never clear while DB says printing.
-      const dbRow = await getPrinterRow(printer.supabaseId);
-      if (!dbRow || dbRow.status === "printing") {
-        console.log(`[${printer.name}] DB still printing — skipping active_user_id clear`);
-        return;
-      }
-
-      const current = lastStatus[printer.supabaseId];
-      console.log(`[${printer.name}] print end confirmed (${current}) — clearing active_user_id`);
-      await supabase
-        .from("printers")
-        .update({ active_user_id: null })
-        .eq("id", printer.supabaseId);
-
-      if (current === "idle") {
-        await supabase
-          .from("queues")
-          .update({ notified_at: null })
-          .eq("printer_id", printer.supabaseId);
-        await reconcileClaimWindow(printer);
-      }
-    }, 20_000);
-    return;
-  }
-
-  // Non-printing → idle (e.g. error cleared): reset notified_at so next head gets notified.
+  // Non-printing → idle: reset notified_at so the next waitlist head gets notified.
   if (newStatus === "idle" && prev !== "idle") {
     await supabase
       .from("queues")
@@ -392,11 +359,13 @@ async function claimWindowWatchdog() {
     .lt("updated_at", staleThreshold);
 
   for (const p of stale ?? []) {
-    // Re-read status at clear time — lastStatus may have recovered since the query.
     const row = await getPrinterRow(p.id);
     if (!row || row.status === "printing") continue;
-    console.log(`[watchdog] clearing stale active_user_id on printer ${p.id}`);
+    const cfg = PRINTER_CONFIG.find((c) => c.supabaseId === p.id);
+    console.log(`[watchdog] print ended on ${cfg?.name ?? p.id} — clearing active_user_id`);
     await supabase.from("printers").update({ active_user_id: null }).eq("id", p.id);
+    // Notify next person in waitlist now that the printer is free.
+    if (row.status === "idle" && cfg) await reconcileClaimWindow(cfg);
   }
 
   // 3. Reconcile missed windows: idle printers whose queue head has no notified_at.
