@@ -134,9 +134,9 @@ function LoginForm() {
             </div>
             <div className="rounded-lg border border-border bg-background p-4">
               <ListOrdered className="mb-3 size-5 text-muted-foreground" />
-              <p className="text-sm font-medium">Fair queue</p>
+              <p className="text-sm font-medium">Notification waitlist</p>
               <p className="mt-1 text-pretty text-xs leading-5 text-muted-foreground">
-                Join a printer queue and keep the next job moving.
+                Sign up for a printer and get notified the moment it&apos;s available.
               </p>
             </div>
           </div>
