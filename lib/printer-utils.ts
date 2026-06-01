@@ -8,7 +8,7 @@ export function normalizeStatus(raw: string | null | undefined): PrinterStatus {
 
 export function formatTime(minutes: number | null): string {
   if (minutes === null || Number.isNaN(minutes)) return "—";
-  if (minutes <= 0) return "Ready";
+  if (minutes <= 0) return "0m";
   const h = Math.floor(minutes / 60);
   const m = Math.floor(minutes % 60);
   return h === 0 ? `${m}m` : `${h}h ${m}m`;

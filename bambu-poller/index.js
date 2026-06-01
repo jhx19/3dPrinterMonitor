@@ -65,6 +65,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 const lastStatus = {};
 for (const p of PRINTER_CONFIG) lastStatus[p.supabaseId] = null;
 
+// Debounce timers for printing→idle/error transitions.
+// Bambu printers sometimes blip idle briefly mid-print; we wait before acting.
+const printingEndTimers = {};
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function toStatus(gcodeState) {
@@ -190,9 +194,7 @@ async function handleTransition(printer, newStatus) {
   lastStatus[printer.supabaseId] = newStatus;
 
   if (prev === null) {
-    // First MQTT message after poller startup. No transition to detect, but if
-    // the printer is not printing and active_user_id is still set, the print
-    // ended while the poller was offline — clear it now.
+    // First MQTT message after poller startup — clear stale active_user_id if needed.
     if (newStatus !== "printing") {
       await supabase
         .from("printers")
@@ -202,13 +204,43 @@ async function handleTransition(printer, newStatus) {
     return;
   }
 
-  if (prev === "printing" && (newStatus === "idle" || newStatus === "error")) {
-    await supabase
-      .from("printers")
-      .update({ active_user_id: null })
-      .eq("id", printer.supabaseId);
+  // If printer recovered back to printing, cancel any pending end-of-print logic.
+  if (newStatus === "printing") {
+    if (printingEndTimers[printer.supabaseId]) {
+      console.log(`[${printer.name}] print resumed — cancelling end-of-print timer`);
+      clearTimeout(printingEndTimers[printer.supabaseId]);
+      delete printingEndTimers[printer.supabaseId];
+    }
+    return;
   }
 
+  // Debounce printing→idle/error: wait 20 s before treating it as a real print end.
+  // Bambu printers sometimes blip idle briefly mid-print (firmware quirk).
+  if (prev === "printing") {
+    clearTimeout(printingEndTimers[printer.supabaseId]);
+    printingEndTimers[printer.supabaseId] = setTimeout(async () => {
+      delete printingEndTimers[printer.supabaseId];
+      const current = lastStatus[printer.supabaseId];
+      if (current === "printing") return; // recovered within the window
+
+      console.log(`[${printer.name}] print end confirmed (${current}) — clearing active_user_id`);
+      await supabase
+        .from("printers")
+        .update({ active_user_id: null })
+        .eq("id", printer.supabaseId);
+
+      if (current === "idle") {
+        await supabase
+          .from("queues")
+          .update({ notified_at: null })
+          .eq("printer_id", printer.supabaseId);
+        await reconcileClaimWindow(printer);
+      }
+    }, 20_000);
+    return;
+  }
+
+  // Non-printing → idle (e.g. error cleared): reset notified_at so next head gets notified.
   if (newStatus === "idle" && prev !== "idle") {
     await supabase
       .from("queues")
@@ -240,7 +272,6 @@ async function updatePrinter(printer, printPayload) {
   );
 
   await handleTransition(printer, status);
-  if (status === "idle") await reconcileClaimWindow(printer);
 }
 
 // ─── Watchdog (every 60 s) ─────────────────────────────────────────────────────
