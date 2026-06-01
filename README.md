@@ -20,7 +20,7 @@ A live dashboard and notification-assisted waitlist that:
 - Lets students sign in and join a per-printer queue from anywhere
 - Notifies the next student by email when a printer becomes free
 - Gives the head of the queue a 5-minute window to go start their print
-- Lets any queue member confirm they started once the printer is printing
+- Lets the notified queue head confirm they started once the printer is printing
 - Handles no-shows, promotes the next person, and records missed turns for TA reference
 
 The system is a **soft coordination tool, not an access-control gate**. Printers are shared school property and students can always walk up and start a print. The app helps coordinate and reduce wasted idle time.
@@ -35,7 +35,7 @@ The system is a **soft coordination tool, not an access-control gate**. Printers
 | Backend / DB | Supabase (Postgres + Auth + Realtime + Edge Functions) |
 | Printer integration | Bambu Lab MQTT local API; poller runs on a makerspace LAN computer |
 | Email notifications | Supabase Edge Function (`send-notification`) calling Gmail via nodemailer — credentials stored in Supabase secrets only |
-| Testing | Vitest + Testing Library (41 tests) |
+| Testing | Vitest + Testing Library (40 tests) |
 
 ---
 
@@ -133,7 +133,7 @@ If Supabase credentials are missing, the dashboard shows local preview data and 
 
 ```bash
 npm run dev      # dev server
-npm test         # run all 41 tests
+npm test         # run all 40 tests
 npm run lint     # lint (note: may warn on bambu-poller CommonJS require)
 npm run build    # production build
 ```
@@ -149,7 +149,7 @@ Creates:
 - `profiles` — with `role`, `strikes`, `is_banned`
 - `queues` — with `notified_at`, `started_at`; max-3 trigger enforced
 - `no_show_records`
-- `claim_printer(uuid)` — SECURITY DEFINER RPC for "I've Started"
+- `claim_printer(uuid)` — SECURITY DEFINER RPC for print claim confirmation
 - Signup trigger, RLS policies, seed records for four printers
 
 ### Supabase Edge Function
@@ -207,11 +207,11 @@ pm2 restart bambu-poller
 - Connects to each printer's local MQTT broker over TLS
 - Reads `gcode_state`, `mc_remaining_time`, and error codes from telemetry
 - Writes `status`, `time_remaining`, `error_code`, `updated_at` to Supabase
-- On `printing → idle/error`: clears `active_user_id` (triggers email webhook)
+- On `printing → idle/error`: updates DB status (triggers print-ended email webhook)
 - On becoming idle: resets `notified_at` for all queue entries, then starts the claim window for the head of queue (calls Edge Function directly)
 - Watchdog every 60 seconds:
-  - Expires overdue claim windows (10+ min with no print started)
-  - Clears stale `active_user_id` on non-printing printers (handles poller restarts)
+  - Expires overdue claim windows (5+ min with no print started)
+  - Clears stale `active_user_id` on non-printing printers after 30 min with no MQTT update
   - Starts missed claim windows for idle printers whose queue head has no `notified_at`
 
 ### Required `.env` values
