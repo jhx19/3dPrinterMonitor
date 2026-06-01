@@ -230,15 +230,7 @@ async function handleTransition(printer, newStatus) {
   lastStatus[printer.supabaseId] = newStatus;
 
   if (prev === null) {
-    // Poller just started. If printer is idle/error, clear any stale active_user_id
-    // from before the restart (watchdog won't have caught it yet).
-    if (newStatus !== "printing") {
-      const dbRow = await getPrinterRow(printer.supabaseId);
-      if (dbRow && dbRow.status !== "printing" && dbRow.active_user_id) {
-        console.log(`[${printer.name}] startup: clearing stale active_user_id`);
-        await supabase.from("printers").update({ active_user_id: null }).eq("id", printer.supabaseId);
-      }
-    }
+    // First message after startup — watchdog handles any stale active_user_id.
     return;
   }
 
@@ -423,24 +415,6 @@ function connectPrinter(printer) {
   client.on("error", (err) => console.error(`[${printer.name}] MQTT error:`, err.message));
   client.on("offline", () => console.warn(`[${printer.name}] offline`));
 }
-
-// ─── Audit: watch for active_user_id being cleared ────────────────────────────
-
-supabase
-  .channel("audit-active-user")
-  .on("postgres_changes", { event: "UPDATE", schema: "public", table: "printers" }, (payload) => {
-    const wasSet = payload.old?.active_user_id;
-    const nowNull = !payload.new?.active_user_id;
-    if (wasSet && nowNull) {
-      const cfg = PRINTER_CONFIG.find((p) => p.supabaseId === payload.new.id);
-      console.warn(
-        `[AUDIT] active_user_id CLEARED on ${cfg?.name ?? payload.new.id}` +
-        `  status: ${payload.old?.status} → ${payload.new?.status}` +
-        `  lastStatus: ${lastStatus[payload.new.id]}`
-      );
-    }
-  })
-  .subscribe();
 
 // ─── Main ──────────────────────────────────────────────────────────────────────
 
