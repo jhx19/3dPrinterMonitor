@@ -65,6 +65,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 const lastStatus = {};
 for (const p of PRINTER_CONFIG) lastStatus[p.supabaseId] = null;
 
+// Per-printer sequential queues — prevents race conditions from concurrent MQTT messages.
+const printerQueues = {};
+
 // Debounce timers for printing→idle/error transitions.
 // Bambu printers sometimes blip idle/error briefly mid-print; we wait before acting.
 const printingEndTimers = {};  // business logic (active_user_id, notify)
@@ -412,7 +415,12 @@ function connectPrinter(printer) {
   client.on("message", (_topic, payload) => {
     let data;
     try { data = JSON.parse(payload.toString()); } catch { return; }
-    if (data.print) void updatePrinter(printer, data.print);
+    if (data.print) {
+      const prev = printerQueues[printer.supabaseId] ?? Promise.resolve();
+      printerQueues[printer.supabaseId] = prev
+        .then(() => updatePrinter(printer, data.print))
+        .catch((err) => console.error(`[${printer.name}] queue error:`, err.message));
+    }
   });
 
   client.on("reconnect", () => console.log(`[${printer.name}] reconnecting…`));
