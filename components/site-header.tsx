@@ -58,9 +58,7 @@ export function SiteHeader() {
           href="/dashboard"
           className="inline-flex h-10 items-center gap-2 rounded-full bg-background px-3 text-sm font-semibold shadow-xs"
         >
-          <span className="grid size-7 place-items-center rounded-full bg-zinc-100">
-            <Printer className="size-4 text-amber-600" />
-          </span>
+          <Printer className="size-4 text-amber-600" />
           <span>Printer Hub</span>
         </Link>
 
