@@ -31,7 +31,7 @@ const { createClient } = require("@supabase/supabase-js");
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-const CLAIM_WINDOW_MS = 5 * 60 * 1000;
+const CLAIM_WINDOW_MS = 10 * 60 * 1000;
 
 const PRINTER_CONFIG = [1, 2, 3, 4]
   .map((n) => ({
@@ -65,20 +65,6 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 const lastStatus = {};
 for (const p of PRINTER_CONFIG) lastStatus[p.supabaseId] = null;
 
-// Per-printer sequential queues — prevents race conditions from concurrent MQTT messages.
-const printerQueues = {};
-
-// Tracks printers currently in the debounce window (printing→non-printing transition).
-const inPrintingDebounce = new Set();
-
-// Status-write debounce timers only (delays DB status column update during blips).
-// active_user_id clearing is handled exclusively by the watchdog to avoid timer races.
-
-
-// Debounce timers for printing→idle/error transitions.
-// Bambu printers sometimes blip idle/error briefly mid-print; we wait before acting.
-const statusWriteTimers = {};  // DB status column write (blip debounce)
-
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function toStatus(gcodeState) {
@@ -102,29 +88,6 @@ function errorCodeFromPayload(print) {
   if (hms.length > 0 && hms[0] && (hms[0].code !== undefined || hms[0].attr !== undefined)) {
     return `HMS ${hms[0].attr ?? "?"}-${hms[0].code ?? "?"}`;
   }
-  return null;
-}
-
-function errorMessageFromPayload(print) {
-  const hms = Array.isArray(print.hms) ? print.hms : [];
-  if (hms.length > 0 && hms[0]) {
-    const attr = typeof hms[0].attr === "number" ? hms[0].attr : 0;
-    const module = (attr >>> 16) & 0xFFFF;
-    if (module === 0x0500) return "AMS issue";
-    if (module === 0x0700) return "Extruder issue";
-    if (module === 0x0800) return "Nozzle issue";
-    if (module === 0x0900) return "Heated bed issue";
-    if (module === 0x0300) return "Motion system issue";
-    return "Hardware issue";
-  }
-  const printError = print.print_error;
-  if (typeof printError === "number" && printError !== 0) {
-    if ((printError >>> 16) === 0x0300) return "Filament issue";
-    return "Print error";
-  }
-  const gcodeState = (print.gcode_state ?? "").toUpperCase();
-  if (gcodeState === "FAILED") return "Print failed";
-  if (gcodeState === "PAUSE") return "Print paused";
   return null;
 }
 
@@ -221,35 +184,31 @@ async function reconcileClaimWindow(printer) {
 }
 
 // ─── State-machine handler ─────────────────────────────────────────────────────
-// NOTE: active_user_id clearing is done ONLY by the watchdog (runs every 60s,
-// requires 2+ min of confirmed non-printing in DB). No timers clear it here —
-// timers running outside the sequential queue caused race conditions.
 
 async function handleTransition(printer, newStatus) {
   const prev = lastStatus[printer.supabaseId];
   lastStatus[printer.supabaseId] = newStatus;
 
   if (prev === null) {
-    // First message after startup — watchdog handles any stale active_user_id.
-    return;
-  }
-
-  if (newStatus === "printing") {
-    inPrintingDebounce.delete(printer.supabaseId);
-    // If coming back from error without going through idle, the queue head may
-    // never have been notified. Notify them now so the claim modal can appear.
-    if (prev === "error") {
-      const queue = await getQueue(printer.supabaseId);
-      const head = queue[0];
-      if (head && !head.notified_at) {
-        console.log(`[${printer.name}] error→printing: notifying queue head ${head.user_id}`);
-        await startClaimWindow(head, true);
-      }
+    // First MQTT message after poller startup. No transition to detect, but if
+    // the printer is not printing and active_user_id is still set, the print
+    // ended while the poller was offline — clear it now.
+    if (newStatus !== "printing") {
+      await supabase
+        .from("printers")
+        .update({ active_user_id: null })
+        .eq("id", printer.supabaseId);
     }
     return;
   }
 
-  // Non-printing → idle: reset notified_at so the next waitlist head gets notified.
+  if (prev === "printing" && (newStatus === "idle" || newStatus === "error")) {
+    await supabase
+      .from("printers")
+      .update({ active_user_id: null })
+      .eq("id", printer.supabaseId);
+  }
+
   if (newStatus === "idle" && prev !== "idle") {
     await supabase
       .from("queues")
@@ -261,70 +220,49 @@ async function handleTransition(printer, newStatus) {
 // ─── Push telemetry to Supabase ────────────────────────────────────────────────
 
 async function updatePrinter(printer, printPayload) {
-  const status = toStatus(printPayload.gcode_state);
-  const timeRemaining =
-    typeof printPayload.mc_remaining_time === "number" ? printPayload.mc_remaining_time : null;
-  const errorCode = status === "error" ? errorCodeFromPayload(printPayload) : null;
-  const errorMessage = status === "error" ? errorMessageFromPayload(printPayload) : null;
+  const hasState = printPayload.gcode_state !== undefined && printPayload.gcode_state !== null;
+  const hasTime = typeof printPayload.mc_remaining_time === "number";
 
-  const prev = lastStatus[printer.supabaseId];
-
-  // Debounce printing→idle/error blips.
-  // Once a printer enters the debounce window (printing→non-printing), ALL subsequent
-  // non-printing messages are also debounced until the window closes. This prevents
-  // the second non-printing message from bypassing the debounce after lastStatus is updated.
-  const inDebounce = inPrintingDebounce.has(printer.supabaseId);
-  const shouldDebounce = (prev === "printing" || inDebounce) && status !== "printing";
-
-  if (shouldDebounce) {
-    inPrintingDebounce.add(printer.supabaseId);
-
-    // Always update time_remaining immediately for UI accuracy.
-    await supabase
-      .from("printers")
-      .update({ time_remaining: timeRemaining, updated_at: new Date().toISOString() })
-      .eq("id", printer.supabaseId);
-
-    clearTimeout(statusWriteTimers[printer.supabaseId]);
-    statusWriteTimers[printer.supabaseId] = setTimeout(async () => {
-      delete statusWriteTimers[printer.supabaseId];
-      inPrintingDebounce.delete(printer.supabaseId);
-      const current = lastStatus[printer.supabaseId];
-      if (current === "printing") return;
-      console.log(`[${printer.name}] ${current} confirmed — writing status to DB`);
-      await supabase
+  // Bambu pushes a full snapshot once on connect, then incremental reports that
+  // carry only the fields that changed. A missing gcode_state means "this report
+  // didn't include the run-state" — NOT "idle". Treating it as idle made the
+  // status flap available↔printing and tripped the print-end cleanup that clears
+  // active_user_id. So when gcode_state is absent we refresh time_remaining only
+  // (if present) and never touch status / active_user_id / claim windows.
+  if (!hasState) {
+    if (hasTime) {
+      const { error } = await supabase
         .from("printers")
-        .update({ status: current, error_code: current === "error" ? errorCode : null, updated_at: new Date().toISOString() })
+        .update({ time_remaining: printPayload.mc_remaining_time, updated_at: new Date().toISOString() })
         .eq("id", printer.supabaseId);
-    }, 10_000);
-
-    console.log(`[${printer.name}] ${status} (debouncing)  ${timeRemaining ?? "?"}m remaining`);
-  } else {
-    // Printer returned to printing — clear debounce window and timers.
-    if (status === "printing") {
-      inPrintingDebounce.delete(printer.supabaseId);
-      if (statusWriteTimers[printer.supabaseId]) {
-        clearTimeout(statusWriteTimers[printer.supabaseId]);
-        delete statusWriteTimers[printer.supabaseId];
-      }
+      if (error) console.error(`[${printer.name}] Supabase update error:`, error.message);
     }
-
-    const { error } = await supabase
-      .from("printers")
-      .update({ status, time_remaining: timeRemaining, error_code: errorCode, updated_at: new Date().toISOString() })
-      .eq("id", printer.supabaseId);
-
-    if (error) {
-      console.error(`[${printer.name}] Supabase update error:`, error.message);
-      return;
-    }
-
-    console.log(
-      `[${printer.name}] ${status} (gcode=${printPayload.gcode_state ?? "?"})  ${timeRemaining ?? "?"}m remaining${errorCode ? `  error=${errorCode}` : ""}`,
-    );
+    return;
   }
 
+  const status = toStatus(printPayload.gcode_state);
+  // Only carry a remaining time while actually printing. Bambu reports
+  // mc_remaining_time: 0 at finish; writing 0 made the UI show "0m left" / "Ready"
+  // instead of "Available". Non-printing states have no meaningful countdown.
+  const timeRemaining = status === "printing" && hasTime ? printPayload.mc_remaining_time : null;
+  const errorCode = status === "error" ? errorCodeFromPayload(printPayload) : null;
+
+  const { error } = await supabase
+    .from("printers")
+    .update({ status, time_remaining: timeRemaining, error_code: errorCode, updated_at: new Date().toISOString() })
+    .eq("id", printer.supabaseId);
+
+  if (error) {
+    console.error(`[${printer.name}] Supabase update error:`, error.message);
+    return;
+  }
+
+  console.log(
+    `[${printer.name}] ${status}  ${timeRemaining ?? "?"}m remaining${errorCode ? `  error=${errorCode}` : ""}`,
+  );
+
   await handleTransition(printer, status);
+  if (status === "idle") await reconcileClaimWindow(printer);
 }
 
 // ─── Watchdog (every 60 s) ─────────────────────────────────────────────────────
@@ -350,24 +288,38 @@ async function claimWindowWatchdog() {
     }
   }
 
-  // 2. Clear stale active_user_id: non-printing printers with no MQTT update for 30+ min.
-  //    30 min covers filament changes and long pauses without falsely dropping the claim.
-  const staleThreshold = new Date(Date.now() - 30 * 60_000).toISOString();
+  // 2. Clear stale active_user_id: any non-printing printer that still has one set
+  //    means the poller missed the print-end transition (e.g. restarted mid-print).
   const { data: stale } = await supabase
     .from("printers")
     .select("id")
     .neq("status", "printing")
-    .not("active_user_id", "is", null)
-    .lt("updated_at", staleThreshold);
+    .not("active_user_id", "is", null);
 
   for (const p of stale ?? []) {
-    const row = await getPrinterRow(p.id);
-    if (!row || row.status === "printing") continue;
-    const cfg = PRINTER_CONFIG.find((c) => c.supabaseId === p.id);
-    console.log(`[watchdog] print ended on ${cfg?.name ?? p.id} — clearing active_user_id`);
+    console.log(`[watchdog] clearing stale active_user_id on printer ${p.id}`);
     await supabase.from("printers").update({ active_user_id: null }).eq("id", p.id);
-    // Notify next person in waitlist now that the printer is free.
-    if (row.status === "idle" && cfg) await reconcileClaimWindow(cfg);
+  }
+
+  // 2b. Fallback for prints that finished while MQTT was down. pushall refreshes
+  //     updated_at every 30s on a live connection, so 10+ min of silence means the
+  //     link dropped. If the print was already at its tail (time_remaining null or
+  //     ≤ 0) we treat it as finished and release the printer. We require the ≤0
+  //     guard so a long job whose MQTT blips out mid-print is NOT force-idled.
+  const printingCutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const { data: silent } = await supabase
+    .from("printers")
+    .select("id, time_remaining")
+    .eq("status", "printing")
+    .lt("updated_at", printingCutoff);
+
+  for (const p of silent ?? []) {
+    if (p.time_remaining !== null && p.time_remaining > 0) continue;
+    console.log(`[watchdog] printing+silent 10min on ${p.id} — releasing as finished`);
+    await supabase
+      .from("printers")
+      .update({ status: "idle", time_remaining: null, active_user_id: null })
+      .eq("id", p.id);
   }
 
   // 3. Reconcile missed windows: idle printers whose queue head has no notified_at.
@@ -393,6 +345,22 @@ setInterval(() => void claimWindowWatchdog(), 60_000);
 
 // ─── MQTT ──────────────────────────────────────────────────────────────────────
 
+const clients = [];
+
+// Bambu only emits a full report (the one that contains gcode_state) on connect
+// and when you explicitly ask for it. Its spontaneous reports are incremental and
+// usually omit gcode_state — so a finished print may never push a "FINISH" state,
+// leaving the printer stuck at status=printing. Requesting a pushall on a timer
+// guarantees we periodically get an authoritative gcode_state and detect the
+// printing→idle transition reliably.
+function requestPushAll(client) {
+  if (!client.connected) return;
+  client.publish(
+    `device/${client.serialNumber}/request`,
+    JSON.stringify({ pushing: { sequence_id: "0", command: "pushall" } }),
+  );
+}
+
 function connectPrinter(printer) {
   const client = mqtt.connect(`mqtts://${printer.ip}`, {
     port: 8883,
@@ -402,29 +370,33 @@ function connectPrinter(printer) {
     reconnectPeriod: 5000,
     connectTimeout: 10_000,
   });
+  client.serialNumber = printer.serialNumber;
 
   client.on("connect", () => {
     console.log(`[${printer.name}] MQTT connected`);
     client.subscribe(`device/${printer.serialNumber}/report`, (err) => {
       if (err) console.error(`[${printer.name}] Subscribe error:`, err.message);
     });
+    requestPushAll(client); // grab a full snapshot immediately on (re)connect
   });
 
   client.on("message", (_topic, payload) => {
     let data;
     try { data = JSON.parse(payload.toString()); } catch { return; }
-    if (data.print) {
-      const prev = printerQueues[printer.supabaseId] ?? Promise.resolve();
-      printerQueues[printer.supabaseId] = prev
-        .then(() => updatePrinter(printer, data.print))
-        .catch((err) => console.error(`[${printer.name}] queue error:`, err.message));
-    }
+    if (data.print) void updatePrinter(printer, data.print);
   });
 
   client.on("reconnect", () => console.log(`[${printer.name}] reconnecting…`));
   client.on("error", (err) => console.error(`[${printer.name}] MQTT error:`, err.message));
   client.on("offline", () => console.warn(`[${printer.name}] offline`));
+
+  clients.push(client);
 }
+
+// Refresh a full report from every connected printer on a timer.
+setInterval(() => {
+  for (const client of clients) requestPushAll(client);
+}, 30_000);
 
 // ─── Main ──────────────────────────────────────────────────────────────────────
 
