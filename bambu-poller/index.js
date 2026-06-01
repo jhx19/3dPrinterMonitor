@@ -66,8 +66,9 @@ const lastStatus = {};
 for (const p of PRINTER_CONFIG) lastStatus[p.supabaseId] = null;
 
 // Debounce timers for printing→idle/error transitions.
-// Bambu printers sometimes blip idle briefly mid-print; we wait before acting.
-const printingEndTimers = {};
+// Bambu printers sometimes blip idle/error briefly mid-print; we wait before acting.
+const printingEndTimers = {};  // business logic (active_user_id, notify)
+const statusWriteTimers = {};  // DB status column write
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -281,19 +282,49 @@ async function updatePrinter(printer, printPayload) {
   const errorCode = status === "error" ? errorCodeFromPayload(printPayload) : null;
   const errorMessage = status === "error" ? errorMessageFromPayload(printPayload) : null;
 
-  const { error } = await supabase
-    .from("printers")
-    .update({ status, time_remaining: timeRemaining, error_code: errorCode, error_message: errorMessage, updated_at: new Date().toISOString() })
-    .eq("id", printer.supabaseId);
+  const prev = lastStatus[printer.supabaseId];
 
-  if (error) {
-    console.error(`[${printer.name}] Supabase update error:`, error.message);
-    return;
+  // Debounce printing→error status write: Bambu printers blip error briefly mid-print.
+  // Write time_remaining immediately (for UI accuracy) but delay the status change.
+  if (prev === "printing" && status === "error") {
+    await supabase
+      .from("printers")
+      .update({ time_remaining: timeRemaining, updated_at: new Date().toISOString() })
+      .eq("id", printer.supabaseId);
+
+    clearTimeout(statusWriteTimers[printer.supabaseId]);
+    statusWriteTimers[printer.supabaseId] = setTimeout(async () => {
+      delete statusWriteTimers[printer.supabaseId];
+      if (lastStatus[printer.supabaseId] !== "error") return; // recovered — skip
+      console.log(`[${printer.name}] error confirmed — writing to DB`);
+      await supabase
+        .from("printers")
+        .update({ status: "error", error_code: errorCode, error_message: errorMessage, updated_at: new Date().toISOString() })
+        .eq("id", printer.supabaseId);
+    }, 10_000);
+
+    console.log(`[${printer.name}] ${status} (debouncing)  ${timeRemaining ?? "?"}m remaining`);
+  } else {
+    // Cancel any pending error status write if printer recovered.
+    if (statusWriteTimers[printer.supabaseId]) {
+      clearTimeout(statusWriteTimers[printer.supabaseId]);
+      delete statusWriteTimers[printer.supabaseId];
+    }
+
+    const { error } = await supabase
+      .from("printers")
+      .update({ status, time_remaining: timeRemaining, error_code: errorCode, error_message: errorMessage, updated_at: new Date().toISOString() })
+      .eq("id", printer.supabaseId);
+
+    if (error) {
+      console.error(`[${printer.name}] Supabase update error:`, error.message);
+      return;
+    }
+
+    console.log(
+      `[${printer.name}] ${status}  ${timeRemaining ?? "?"}m remaining${errorCode ? `  error=${errorCode}` : ""}`,
+    );
   }
-
-  console.log(
-    `[${printer.name}] ${status}  ${timeRemaining ?? "?"}m remaining${errorCode ? `  error=${errorCode}` : ""}`,
-  );
 
   await handleTransition(printer, status);
 }
