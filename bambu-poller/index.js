@@ -294,7 +294,7 @@ async function updatePrinter(printer, printPayload) {
       console.log(`[${printer.name}] ${current} confirmed — writing status to DB`);
       await supabase
         .from("printers")
-        .update({ status: current, error_code: current === "error" ? errorCode : null, error_message: current === "error" ? errorMessage : null, updated_at: new Date().toISOString() })
+        .update({ status: current, error_code: current === "error" ? errorCode : null, updated_at: new Date().toISOString() })
         .eq("id", printer.supabaseId);
     }, 10_000);
 
@@ -311,7 +311,7 @@ async function updatePrinter(printer, printPayload) {
 
     const { error } = await supabase
       .from("printers")
-      .update({ status, time_remaining: timeRemaining, error_code: errorCode, error_message: errorMessage, updated_at: new Date().toISOString() })
+      .update({ status, time_remaining: timeRemaining, error_code: errorCode, updated_at: new Date().toISOString() })
       .eq("id", printer.supabaseId);
 
     if (error) {
@@ -370,30 +370,7 @@ async function claimWindowWatchdog() {
     if (row.status === "idle" && cfg) await reconcileClaimWindow(cfg);
   }
 
-  // 3. Force-idle stuck printers: status=printing but time_remaining=0 for 10+ min.
-  //    Bambu post-print ops (homing, cooling, filament retract) typically finish within 5 min.
-  //    Covers poller restarts and printers that never send a FINISH message.
-  const zeroTimeThreshold = new Date(Date.now() - 10 * 60_000).toISOString();
-  const { data: stuckPrinting } = await supabase
-    .from("printers")
-    .select("id, name")
-    .eq("status", "printing")
-    .eq("time_remaining", 0)
-    .lt("updated_at", zeroTimeThreshold);
-
-  for (const p of stuckPrinting ?? []) {
-    const cfg = PRINTER_CONFIG.find((c) => c.supabaseId === p.id);
-    console.log(`[watchdog] printer ${cfg?.name ?? p.id} stuck printing with 0m — forcing idle`);
-    await supabase
-      .from("printers")
-      .update({ status: "idle", time_remaining: null, active_user_id: null, updated_at: new Date().toISOString() })
-      .eq("id", p.id);
-    if (cfg) await reconcileClaimWindow(cfg);
-    // Sync in-memory state so the next MQTT message doesn't re-debounce against stale "printing".
-    lastStatus[p.id] = "idle";
-  }
-
-  // 5. Reconcile missed windows: idle printers whose queue head has no notified_at.
+  // 3. Reconcile missed windows: idle printers whose queue head has no notified_at.
   //    This happens when someone joins an already-idle printer (no MQTT transition).
   //    We set notified_at for the countdown display but do NOT send email —
   //    the user can already see the printer is available on the dashboard.
