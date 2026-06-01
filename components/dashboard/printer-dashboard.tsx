@@ -2,14 +2,24 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, RefreshCw, Timer } from "lucide-react";
+import { AlertCircle, RefreshCw } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
-import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
 import type { Database } from "@/types/database";
 import { PrinterGrid } from "@/components/dashboard/printer-grid";
 import type { PrinterStatus, QueueWaiter } from "@/components/dashboard/printer-card";
-import { normalizeStatus, sortQueueByTime } from "@/lib/printer-utils";
+import { formatTime, normalizeStatus, sortQueueByTime } from "@/lib/printer-utils";
 import { cn } from "@/lib/utils";
 
 type QueueRow = Database["public"]["Tables"]["queues"]["Row"];
@@ -40,7 +50,7 @@ const MOCK_NOW = "2026-05-28T02:15:00.000Z";
 const mockPrinters: PrinterViewModel[] = [
   {
     id: "mock-printer-1",
-    name: "shitake",
+    name: "MOREL",
     status: "idle",
     timeRemainingMinutes: null,
     activeUserId: null,
@@ -48,7 +58,7 @@ const mockPrinters: PrinterViewModel[] = [
   },
   {
     id: "mock-printer-2",
-    name: "morel",
+    name: "TURKEY TAIL",
     status: "printing",
     timeRemainingMinutes: 47,
     activeUserId: null,
@@ -64,7 +74,7 @@ const mockPrinters: PrinterViewModel[] = [
   },
   {
     id: "mock-printer-4",
-    name: "TURKEY TAIL",
+    name: "SHIITAKE",
     status: "idle",
     timeRemainingMinutes: null,
     activeUserId: null,
@@ -152,8 +162,8 @@ export function PrinterDashboard() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [joiningIds, setJoiningIds] = useState<Record<string, boolean>>({});
   const [leavingIds, setLeavingIds] = useState<Record<string, boolean>>({});
-  const [startingIds, setStartingIds] = useState<Record<string, boolean>>({});
   const [actionErrors, setActionErrors] = useState<Record<string, string | null>>({});
+  const [dismissedClaimPrinters, setDismissedClaimPrinters] = useState<Set<string>>(new Set());
 
   const loadData = useCallback(async () => {
     if (!supabase) return;
@@ -295,6 +305,21 @@ export function PrinterDashboard() {
     return map;
   }, [printers, queues, userId, profileNames]);
 
+  const claimCandidates = useMemo(() => {
+    if (!userId) return [];
+    return printers.filter((p) => {
+      const waiters = waitersByPrinter.get(p.id) ?? [];
+      const alreadyInQueue = waiters.some((w) => w.userId === userId);
+      const isActiveUser = p.activeUserId === userId;
+      return p.status === "printing" && !p.activeUserId && alreadyInQueue && !isActiveUser;
+    });
+  }, [printers, waitersByPrinter, userId]);
+
+  const activeClaimPrinter = useMemo(
+    () => claimCandidates.find((p) => !dismissedClaimPrinters.has(p.id)) ?? null,
+    [claimCandidates, dismissedClaimPrinters],
+  );
+
   const joinQueue = useCallback(
     async (printer: PrinterViewModel) => {
       const queueCount = queues.filter((q) => q.printer_id === printer.id).length;
@@ -362,7 +387,6 @@ export function PrinterDashboard() {
     [supabase, currentUser, queues, isPreviewMode],
   );
 
-  // "I've Started" — claim the printer once it is actually printing.
   const confirmStart = useCallback(
     async (printer: PrinterViewModel) => {
       if (isPreviewMode) {
@@ -376,23 +400,13 @@ export function PrinterDashboard() {
       }
       if (currentUser === "loading" || !currentUser) return;
       if (!supabase) return;
-      setStartingIds((prev) => ({ ...prev, [printer.id]: true }));
       setActionErrors((prev) => ({ ...prev, [printer.id]: null }));
       const { error } = await supabase.rpc("claim_printer", { p_printer_id: printer.id });
       if (error) setActionErrors((prev) => ({ ...prev, [printer.id]: error.message }));
-      setStartingIds((prev) => ({ ...prev, [printer.id]: false }));
     },
     [supabase, currentUser, isPreviewMode],
   );
 
-  // Printers where it is the current user's turn (idle + head + claim window open).
-  const claimWindowPrinters = useMemo(() => {
-    if (!userId) return [];
-    return printers.filter((p) => {
-      const head = (waitersByPrinter.get(p.id) ?? [])[0];
-      return p.status === "idle" && head?.userId === userId && head.notifiedAt !== null;
-    });
-  }, [printers, waitersByPrinter, userId]);
 
   if (isLoading) {
     return (
@@ -438,8 +452,8 @@ export function PrinterDashboard() {
   const getStatusLabel = (printer: PrinterViewModel) => {
     if (printer.status === "idle") return "Available";
     if (printer.status === "error") return "Error";
-    if (printer.timeRemainingMinutes !== null) {
-      return `${printer.timeRemainingMinutes}m left`;
+    if (printer.timeRemainingMinutes !== null && printer.timeRemainingMinutes > 0) {
+      return `${formatTime(printer.timeRemainingMinutes)} left`;
     }
     return "In use";
   };
@@ -465,26 +479,55 @@ export function PrinterDashboard() {
       isActiveUser,
       isJoiningQueue: Boolean(joiningIds[printer.id]),
       isLeavingQueue: Boolean(leavingIds[printer.id]),
-      isStartingPrint: Boolean(startingIds[printer.id]),
       alreadyInQueue,
       isBanned,
       actionError: actionErrors[printer.id] ?? null,
       queueLimit: QUEUE_LIMIT,
       onJoinQueue: async () => joinQueue(printer),
       onLeaveQueue: async () => leaveQueue(printer),
-      onIveStarted: async () => confirmStart(printer),
     };
   });
 
   return (
+    <>
+    <AlertDialog
+      open={!!activeClaimPrinter}
+      onOpenChange={(open) => {
+        if (!open && activeClaimPrinter) {
+          setDismissedClaimPrinters((prev) => new Set([...prev, activeClaimPrinter.id]));
+        }
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            Did you start this print on {activeClaimPrinter?.name}?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            Confirm it&apos;s you and we&apos;ll email you when the print is done.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>No, not me</AlertDialogCancel>
+          <AlertDialogAction
+            className={buttonVariants({ variant: "default" })}
+            onClick={() => {
+              if (activeClaimPrinter) void confirmStart(activeClaimPrinter);
+            }}
+          >
+            Yes, that&apos;s me
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
     <div className="grid gap-6 lg:grid-cols-[minmax(190px,0.5fr)_minmax(0,2.35fr)] lg:items-start">
       <section className="min-w-0 space-y-4">
         <div>
           <h1 className="text-balance text-3xl font-semibold leading-tight sm:text-4xl">
-            Printer Queue
+            Printer Status
           </h1>
           <p className="mt-2 text-pretty text-sm text-muted-foreground">
-            Live printer availability and queue order.
+            Live availability and notification waitlist.
           </p>
         </div>
 
@@ -511,26 +554,12 @@ export function PrinterDashboard() {
           </div>
         </div>
 
-        {claimWindowPrinters.length > 0 && (
-          <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            <Timer className="size-5 shrink-0" />
-            <div>
-              <span className="font-semibold">
-                {claimWindowPrinters.length === 1
-                  ? `${claimWindowPrinters[0].name} is ready for you!`
-                  : `${claimWindowPrinters.length} printers are ready for you!`}
-              </span>
-              <p className="mt-1 text-xs">
-                Go start your print, then confirm with &ldquo;I&apos;ve Started&rdquo; once it&apos;s running.
-              </p>
-            </div>
-          </div>
-        )}
       </section>
 
       <div className="min-w-0">
         <PrinterGrid printers={printerCards} />
       </div>
     </div>
+    </>
   );
 }

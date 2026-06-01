@@ -57,14 +57,12 @@ export interface PrinterCardProps {
   isActiveUser: boolean;
   isJoiningQueue: boolean;
   isLeavingQueue: boolean;
-  isStartingPrint: boolean;
   alreadyInQueue: boolean;
   isBanned: boolean;
   actionError: string | null;
   queueLimit: number;
   onJoinQueue: () => Promise<void>;
   onLeaveQueue: () => Promise<void>;
-  onIveStarted: () => Promise<void>;
 }
 
 const statusConfig: Record<
@@ -94,20 +92,8 @@ const statusPanelClass: Record<PrinterStatus, string> = {
   error: "border-red-200 bg-red-50",
 };
 
-const CLAIM_WINDOW_MS = 10 * 60 * 1000;
+const CLAIM_WINDOW_MS = 5 * 60 * 1000;
 
-function formatUpdatedLabel(updatedAtMs: number | null, now: number) {
-  if (updatedAtMs === null) return "No update yet";
-
-  const minutes = Math.max(0, Math.round((now - updatedAtMs) / 60000));
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${minutes} min ago`;
-
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-
-  return "Over 24h ago";
-}
 
 export function PrinterCard({
   printerName,
@@ -121,14 +107,12 @@ export function PrinterCard({
   isActiveUser,
   isJoiningQueue,
   isLeavingQueue,
-  isStartingPrint,
   alreadyInQueue,
   isBanned,
   actionError,
   queueLimit,
   onJoinQueue,
   onLeaveQueue,
-  onIveStarted,
 }: PrinterCardProps) {
   const config = statusConfig[status];
   const slot1 = waiters[0] ?? null;
@@ -141,11 +125,6 @@ export function PrinterCard({
 
   // Is the current user the one whose claim window is open?
   const isMyTurn = headHasWindow && slot1?.userId === currentUserId;
-
-  // Once the printer is printing and nobody has claimed it, every queue member
-  // sees "I've Started" — the button is the only signal of who actually started.
-  const canClaim =
-    status === "printing" && !activeUserName && alreadyInQueue && !isActiveUser;
 
   const [now, setNow] = useState(() => Date.now());
 
@@ -161,13 +140,19 @@ export function PrinterCard({
       ? Math.max(0, CLAIM_WINDOW_MS - (now - windowStartMs))
       : null;
   const updatedAtMs = updatedAt ? Date.parse(updatedAt) : null;
-  const updatedLabel = formatUpdatedLabel(updatedAtMs, now);
+  const estimatedDoneAt =
+    status === "printing" && timeRemainingMinutes !== null && timeRemainingMinutes > 0
+      ? new Date(Date.now() + timeRemainingMinutes * 60 * 1000)
+      : null;
+  const doneAtLabel = estimatedDoneAt
+    ? estimatedDoneAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : null;
   const isStale =
     showStaleWarning && (updatedAtMs === null || now - updatedAtMs > 2 * 60 * 1000);
 
   const primaryLabel =
     status === "error"
-      ? "Printer needs attention"
+      ? "Needs attention"
       : status === "idle"
         ? "Available"
         : timeRemainingMinutes !== null
@@ -179,7 +164,7 @@ export function PrinterCard({
       : status === "idle"
         ? waiters.length === 0
           ? "No one is waiting"
-          : `${waiters.length} in queue`
+          : `${waiters.length} waiting`
         : activeUserName
           ? `In use by ${activeUserName}`
           : "Print in progress";
@@ -192,35 +177,26 @@ export function PrinterCard({
           className="h-11 w-full text-red-600 hover:text-red-700"
           disabled={isLeavingQueue}
         >
-          {isLeavingQueue ? "Leaving…" : "Leave Queue"}
+          {isLeavingQueue ? "Leaving…" : "Leave waitlist"}
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Leave this queue?</AlertDialogTitle>
+          <AlertDialogTitle>Leave the waitlist?</AlertDialogTitle>
           <AlertDialogDescription>
-            You will lose your current position for {printerName}. You can join again later if a slot is available.
+            You&apos;ll lose your spot for {printerName}. You can rejoin later if space is available.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction onClick={() => void onLeaveQueue()}>
-            Leave queue
+            Leave waitlist
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
   );
 
-  const iveStartedButton = (
-    <Button
-      className="min-h-11 w-full shrink-0 flex-1 bg-amber-500 hover:bg-amber-600"
-      onClick={() => void onIveStarted()}
-      disabled={isStartingPrint}
-    >
-      {isStartingPrint ? "Confirming…" : "I've Started"}
-    </Button>
-  );
 
   return (
     <Card className="h-full ring-1 ring-zinc-100 shadow-none">
@@ -239,7 +215,15 @@ export function PrinterCard({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-pretty text-sm text-muted-foreground">{primaryDetail}</p>
-              <p className="mt-1 text-3xl font-semibold tabular-nums">{primaryLabel}</p>
+              <div className="mt-1 flex items-baseline gap-3">
+                <p className="text-3xl font-semibold tabular-nums">{primaryLabel}</p>
+                {doneAtLabel && (
+                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <Clock3 className="size-3" />
+                    Ends at {doneAtLabel}
+                  </span>
+                )}
+              </div>
             </div>
             {isStale && (
               <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700">
@@ -248,25 +232,16 @@ export function PrinterCard({
               </span>
             )}
           </div>
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1.5">
-              <Clock3 className="size-3.5" />
-              Updated {updatedLabel}
-            </span>
-            {status !== "printing" && timeRemainingMinutes !== null && (
-              <span className="tabular-nums">Timer: {formatTime(timeRemainingMinutes)}</span>
-            )}
-          </div>
         </div>
 
         {currentUserId !== null && (
         <section className="space-y-2">
           <h3 className="text-sm font-medium text-muted-foreground">
-            Queue ({waiters.length}/{queueLimit})
+            Waitlist ({waiters.length}/{queueLimit})
           </h3>
           {waiters.length === 0 ? (
             <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
-              No one is waiting. Join now to be first in line.
+              No one is waiting — be the first to get notified.
             </p>
           ) : (
             <ul className="space-y-2">
@@ -304,7 +279,7 @@ export function PrinterCard({
         <div className="w-full space-y-2">
           {currentUserId === null ? (
             <p className="text-center text-xs text-muted-foreground">
-              Sign in to view queue and join
+              Sign in to view waitlist and join
             </p>
           ) : isActiveUser ? (
             <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
@@ -315,36 +290,23 @@ export function PrinterCard({
               <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                 <span className="flex items-center gap-1.5 font-semibold">
                   <Timer className="size-4" />
-                  It&apos;s your turn — go start your print
+                  Printer is available — head over now
                 </span>
                 <p className="mt-1 text-xs">
-                  Confirm here once the printer is running.
+                  Go start your print. Once it&apos;s running, come back and confirm.
                 </p>
               </div>
               {leaveButton}
-            </div>
-          ) : canClaim ? (
-            <div className="space-y-2">
-              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                <span className="flex items-center gap-1.5 font-semibold">
-                  <Timer className="size-4" />
-                  Started this print? Confirm it&apos;s you.
-                </span>
-              </div>
-              <div className="flex w-full flex-col gap-2 sm:flex-row">
-                <div className="flex-1">{leaveButton}</div>
-                {iveStartedButton}
-              </div>
             </div>
           ) : alreadyInQueue ? (
             leaveButton
           ) : isBanned ? (
             <div className="space-y-2">
               <Button className="h-11 w-full" disabled>
-                Queue access suspended
+                Waitlist access suspended
               </Button>
               <p className="text-pretty text-xs text-muted-foreground">
-                Ask a TA to review your queue status.
+                Ask a TA to review your status.
               </p>
             </div>
           ) : (
@@ -356,10 +318,10 @@ export function PrinterCard({
               {isJoiningQueue
                 ? "Joining…"
                 : !currentUserId
-                  ? "Sign in to join queue"
+                  ? "Sign in to join waitlist"
                   : queueFull
-                    ? `Queue full (${waiters.length}/${queueLimit})`
-                    : "Join Queue"}
+                    ? `Waitlist full (${waiters.length}/${queueLimit})`
+                    : "Join waitlist"}
             </Button>
           )}
           {actionError && <p className="text-xs text-red-600">{actionError}</p>}

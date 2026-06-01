@@ -21,13 +21,15 @@ create table if not exists public.printers (
   status         text not null default 'idle',
   time_remaining integer,
   filament_level integer,                                          -- kept for back-compat; no longer written by the poller
-  error_code     text,                                             -- raw Bambu error code when status = error (mapping to text is future work)
-  active_user_id uuid references public.profiles(id) on delete set null, -- who is currently printing (claimed via "I've Started")
+  error_code     text,                                             -- raw Bambu error code when status = error
+  error_message  text,                                             -- human-readable error reason shown in UI
+  active_user_id uuid references public.profiles(id) on delete set null, -- who is currently printing (claimed via "I'm starting now")
   updated_at     timestamptz
 );
 
--- Existing databases: add the new columns if the table predates them.
+-- Existing databases: add new columns if the table predates them.
 alter table public.printers add column if not exists error_code     text;
+alter table public.printers add column if not exists error_message  text;
 alter table public.printers add column if not exists active_user_id uuid references public.profiles(id) on delete set null;
 
 create table if not exists public.profiles (
@@ -64,11 +66,17 @@ create table if not exists public.no_show_records (
 
 -- ── Seed printers (fixed UUIDs so the poller config stays stable) ─────────────
 insert into public.printers (id, name, status) values
-  ('11111111-1111-1111-1111-111111111111', 'Bambu X1C #1', 'idle'),
-  ('22222222-2222-2222-2222-222222222222', 'Bambu X1C #2', 'idle'),
-  ('33333333-3333-3333-3333-333333333333', 'Bambu X1C #3', 'idle'),
-  ('44444444-4444-4444-4444-444444444444', 'Bambu X1C #4', 'idle')
+  ('11111111-1111-1111-1111-111111111111', 'MOREL',       'idle'),
+  ('22222222-2222-2222-2222-222222222222', 'TURKEY TAIL', 'idle'),
+  ('33333333-3333-3333-3333-333333333333', 'FLY AGARIC',  'idle'),
+  ('44444444-4444-4444-4444-444444444444', 'SHIITAKE',    'idle')
 on conflict (id) do nothing;
+
+-- Update names on existing databases that still have the old "Bambu X1C #n" names.
+update public.printers set name = 'MOREL'       where id = '11111111-1111-1111-1111-111111111111' and name = 'Bambu X1C #1';
+update public.printers set name = 'TURKEY TAIL' where id = '22222222-2222-2222-2222-222222222222' and name = 'Bambu X1C #2';
+update public.printers set name = 'FLY AGARIC'  where id = '33333333-3333-3333-3333-333333333333' and name = 'Bambu X1C #3';
+update public.printers set name = 'SHIITAKE'    where id = '44444444-4444-4444-4444-444444444444' and name = 'Bambu X1C #4';
 
 -- ── Auto-create profile on signup ─────────────────────────────────────────────
 create or replace function public.handle_new_user()

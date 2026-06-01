@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { PrinterCard } from "@/components/dashboard/printer-card";
 
 const baseProps = {
-  printerName: "Bambu X1C #MOREL",
+  printerName: "MOREL",
   status: "idle" as const,
   timeRemainingMinutes: null,
   updatedAt: "2024-01-01T10:00:00Z",
@@ -15,20 +15,18 @@ const baseProps = {
   isActiveUser: false,
   isJoiningQueue: false,
   isLeavingQueue: false,
-  isStartingPrint: false,
   alreadyInQueue: false,
   isBanned: false,
   actionError: null,
   queueLimit: 3,
   onJoinQueue: vi.fn().mockResolvedValue(undefined),
   onLeaveQueue: vi.fn().mockResolvedValue(undefined),
-  onIveStarted: vi.fn().mockResolvedValue(undefined),
 };
 
 describe("PrinterCard", () => {
   it("renders the printer name", () => {
     render(<PrinterCard {...baseProps} />);
-    expect(screen.getByText("Bambu X1C #MOREL")).toBeInTheDocument();
+    expect(screen.getByText("MOREL")).toBeInTheDocument();
   });
 
   it('shows "Available" badge when status is idle', () => {
@@ -41,9 +39,9 @@ describe("PrinterCard", () => {
     expect(screen.getByText("In use")).toBeInTheDocument();
   });
 
-  it('shows "Printer needs attention" fallback when status is error', () => {
+  it('shows "Needs attention" when status is error', () => {
     render(<PrinterCard {...baseProps} status="error" />);
-    expect(screen.getByText("Printer needs attention")).toBeInTheDocument();
+    expect(screen.getByText("Needs attention")).toBeInTheDocument();
     expect(screen.getByText("Error")).toBeInTheDocument();
   });
 
@@ -59,27 +57,27 @@ describe("PrinterCard", () => {
     expect(screen.getByText("In use by Alex Kim")).toBeInTheDocument();
   });
 
-  it("shows sign-in prompt and hides queue when no user is logged in", () => {
+  it("shows sign-in prompt and hides waitlist when no user is logged in", () => {
     render(<PrinterCard {...baseProps} currentUserId={null} />);
-    expect(screen.getByText(/sign in to view queue/i)).toBeInTheDocument();
-    expect(screen.queryByText(/queue \(/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/sign in to view waitlist/i)).toBeInTheDocument();
+    expect(screen.queryByText(/waitlist \(/i)).not.toBeInTheDocument();
   });
 
-  it('shows "Join Queue" button when user is logged in and not in queue', () => {
+  it('shows "Join waitlist" button when user is logged in and not in waitlist', () => {
     render(<PrinterCard {...baseProps} currentUserId="user-123" alreadyInQueue={false} />);
-    expect(screen.getByRole("button", { name: /join queue/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /join waitlist/i })).toBeEnabled();
   });
 
-  it("calls onJoinQueue when Join Queue is clicked", async () => {
+  it("calls onJoinQueue when Join waitlist is clicked", async () => {
     const onJoinQueue = vi.fn().mockResolvedValue(undefined);
     render(
       <PrinterCard {...baseProps} currentUserId="user-123" onJoinQueue={onJoinQueue} />
     );
-    await userEvent.click(screen.getByRole("button", { name: /join queue/i }));
+    await userEvent.click(screen.getByRole("button", { name: /join waitlist/i }));
     expect(onJoinQueue).toHaveBeenCalledOnce();
   });
 
-  it("disables join when the queue is full", () => {
+  it("disables join when the waitlist is full", () => {
     render(
       <PrinterCard
         {...baseProps}
@@ -91,10 +89,10 @@ describe("PrinterCard", () => {
         ]}
       />,
     );
-    expect(screen.getByRole("button", { name: /queue full/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /waitlist full/i })).toBeDisabled();
   });
 
-  it('shows "Leave Queue" when already in queue (idle, not head)', () => {
+  it('shows "Leave waitlist" when already in waitlist', () => {
     render(
       <PrinterCard
         {...baseProps}
@@ -120,15 +118,15 @@ describe("PrinterCard", () => {
         ]}
       />
     );
-    expect(screen.getByRole("button", { name: /leave queue/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /leave waitlist/i })).toBeInTheDocument();
   });
 
-  it('shows "Queue access suspended" for banned users', () => {
+  it('shows "Waitlist access suspended" for banned users', () => {
     render(<PrinterCard {...baseProps} currentUserId="user-123" isBanned={true} />);
-    expect(screen.getByRole("button", { name: /queue access suspended/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /waitlist access suspended/i })).toBeDisabled();
   });
 
-  it("shows the claim-window countdown (idle head) with no I've Started button", () => {
+  it("shows claim-window alert (idle head) with leave button only", () => {
     render(
       <PrinterCard
         {...baseProps}
@@ -147,62 +145,24 @@ describe("PrinterCard", () => {
         ]}
       />
     );
-    expect(screen.getByText(/it's your turn/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /leave queue/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /i've started/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/printer is available/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /leave waitlist/i })).toBeInTheDocument();
   });
 
-  it("shows I've Started to queue members once the printer is printing and unclaimed", () => {
+  it("shows estimated completion time when printing with time remaining", () => {
     render(
       <PrinterCard
         {...baseProps}
-        currentUserId="user-123"
         status="printing"
-        timeRemainingMinutes={20}
-        alreadyInQueue={true}
-        activeUserName={null}
-        waiters={[
-          {
-            id: "q1",
-            userId: "user-123",
-            displayName: "You",
-            createdAt: "2024-01-01T10:00:00Z",
-            notifiedAt: null,
-            startedAt: null,
-          },
-        ]}
-      />
+        timeRemainingMinutes={90}
+        currentUserId="user-123"
+      />,
     );
-    expect(screen.getByRole("button", { name: /i've started/i })).toBeInTheDocument();
+    expect(screen.getByText(/done around/i)).toBeInTheDocument();
   });
 
-  it("calls onIveStarted when I've Started is clicked", async () => {
-    const onIveStarted = vi.fn().mockResolvedValue(undefined);
-    render(
-      <PrinterCard
-        {...baseProps}
-        currentUserId="user-123"
-        status="printing"
-        alreadyInQueue={true}
-        onIveStarted={onIveStarted}
-        waiters={[
-          {
-            id: "q1",
-            userId: "user-123",
-            displayName: "You",
-            createdAt: "2024-01-01T10:00:00Z",
-            notifiedAt: null,
-            startedAt: null,
-          },
-        ]}
-      />
-    );
-    await userEvent.click(screen.getByRole("button", { name: /i've started/i }));
-    expect(onIveStarted).toHaveBeenCalledOnce();
-  });
-
-  it("displays time remaining when provided", () => {
-    render(<PrinterCard {...baseProps} timeRemainingMinutes={90} />);
-    expect(screen.getByText((_, element) => element?.textContent === "Timer: 1h 30m")).toBeInTheDocument();
+  it("does not show estimated completion time when idle", () => {
+    render(<PrinterCard {...baseProps} status="idle" currentUserId="user-123" />);
+    expect(screen.queryByText(/done around/i)).not.toBeInTheDocument();
   });
 });

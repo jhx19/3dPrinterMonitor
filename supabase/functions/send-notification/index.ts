@@ -77,8 +77,8 @@ async function handleQueueNotified(record: Record<string, unknown>) {
   const name = user.full_name ?? "there";
   await sendEmail(
     user.email,
-    `${printerName} is ready for you!`,
-    `Hi ${name},\n\n${printerName} is now free and it's your turn.\n\nYou have 10 minutes to go to the makerspace and start your print.\nOnce the printer is running, open the GIX Printer Hub and click "I've Started":\n${DASHBOARD_URL}\n\nIf no print starts within 10 minutes, your spot passes to the next person.\n\nGIX Makerspace`,
+    `${printerName} is available — head over now`,
+    `Hi ${name},\n\n${printerName} is now free and it's your turn.\n\nYou have 5 minutes to go to the makerspace and start your print.\nOnce the printer is running, open the GIX Printer Hub and confirm:\n${DASHBOARD_URL}\n\nIf no print starts within 5 minutes, your spot passes to the next person.\n\nGIX Makerspace`,
   );
 }
 
@@ -93,7 +93,7 @@ async function handleNoShow(record: Record<string, unknown>) {
   await sendEmail(
     user.email,
     `You've been removed from the ${printerName} waitlist`,
-    `Hi ${name},\n\nYour 10-minute window for ${printerName} passed without a print starting, so you've been removed from the waitlist.\n\nYou're welcome to join the queue again any time:\n${DASHBOARD_URL}\n\nGIX Makerspace`,
+    `Hi ${name},\n\nYour 5-minute window for ${printerName} passed without a print starting, so your spot has been passed to the next person.\n\nYou're welcome to join the waitlist again any time:\n${DASHBOARD_URL}\n\nGIX Makerspace`,
   );
 }
 

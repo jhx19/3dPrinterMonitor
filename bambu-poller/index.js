@@ -31,7 +31,7 @@ const { createClient } = require("@supabase/supabase-js");
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-const CLAIM_WINDOW_MS = 10 * 60 * 1000;
+const CLAIM_WINDOW_MS = 5 * 60 * 1000;
 
 const PRINTER_CONFIG = [1, 2, 3, 4]
   .map((n) => ({

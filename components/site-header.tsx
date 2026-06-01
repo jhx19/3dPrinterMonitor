@@ -67,8 +67,8 @@ export function SiteHeader() {
         <div className="flex items-center gap-2">
           {user ? (
             <>
-              <span className="hidden h-10 items-center gap-2 rounded-full bg-background px-3 text-xs font-medium text-foreground shadow-xs ring-1 ring-border sm:inline-flex">
-                <UserRound className="size-4 text-muted-foreground" />
+              <span className="hidden items-center gap-1.5 px-1 text-xs text-muted-foreground sm:inline-flex">
+                <UserRound className="size-3.5" />
                 {displayName}
                 {profile?.role === "ta" && (
                   <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">

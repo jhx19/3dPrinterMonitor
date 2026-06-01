@@ -2,7 +2,8 @@
 
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { UserCheck } from "lucide-react";
+import { Printer, UserCheck } from "lucide-react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { createClient, hasSupabaseEnv } from "@/lib/supabase/client";
 
@@ -75,62 +76,83 @@ function ProfileSetupForm() {
   }
 
   return (
-    <div className="flex min-h-[calc(100dvh-3.5rem)] items-center justify-center bg-zinc-50 px-4 py-10">
-      <div className="w-full max-w-sm space-y-6 rounded-xl border border-border bg-white p-8 shadow-sm">
-        <div className="space-y-1 text-center">
-          <div className="flex justify-center">
-            <UserCheck className="size-8 text-amber-500" />
+    <main className="flex min-h-[calc(100dvh-3.5rem)] items-start bg-zinc-50 px-4 py-4 sm:items-center sm:py-10">
+      <div className="mx-auto w-full max-w-sm space-y-6">
+        <div className="space-y-3">
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium"
+          >
+            <Printer className="size-4" />
+            GIX Printer Hub
+          </Link>
+          <div>
+            <h1 className="text-balance text-xl font-semibold leading-tight sm:text-2xl">
+              One more step
+            </h1>
+            <p className="mt-1 text-pretty text-sm text-muted-foreground">
+              Complete your profile to join the printer waitlist.
+            </p>
           </div>
-          <h1 className="text-balance text-xl font-semibold">Complete your profile</h1>
-          <p className="text-pretty text-sm text-muted-foreground">
-            Required to join the printer queue.
-          </p>
+        </div>
+
+        <div className="rounded-xl border border-border bg-white p-6 shadow-sm sm:p-8">
+          <div className="mb-5 flex items-center gap-3">
+            <div className="grid size-9 place-items-center rounded-full bg-amber-50">
+              <UserCheck className="size-5 text-amber-500" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold">Lab profile</p>
+              <p className="text-xs text-muted-foreground">Used for notifications and waitlist</p>
+            </div>
+          </div>
+
           {!hasAuth && (
-            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-pretty text-xs text-amber-700">
+            <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-pretty text-xs text-amber-700">
               Local preview mode: profile saving is disabled until Supabase env vars are configured.
             </p>
           )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <label htmlFor="fullName" className="text-sm font-medium">
+                Full name
+              </label>
+              <input
+                id="fullName"
+                type="text"
+                placeholder="Jane Smith"
+                value={fullName}
+                onChange={(event) => setFullName(event.target.value)}
+                required
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor="studentId" className="text-sm font-medium">
+                Student ID
+              </label>
+              <input
+                id="studentId"
+                type="text"
+                placeholder="e.g. 1234567"
+                value={studentId}
+                onChange={(event) => setStudentId(event.target.value)}
+                required
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              />
+            </div>
+
+            {errorMessage && <p className="text-xs text-red-600">{errorMessage}</p>}
+
+            <Button type="submit" className="h-11 w-full" disabled={isSaving}>
+              {isSaving ? "Saving…" : "Continue"}
+            </Button>
+          </form>
         </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1.5">
-            <label htmlFor="fullName" className="text-sm font-medium">
-              Full name
-            </label>
-            <input
-              id="fullName"
-              type="text"
-              placeholder="Jane Smith"
-              value={fullName}
-              onChange={(event) => setFullName(event.target.value)}
-              required
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label htmlFor="studentId" className="text-sm font-medium">
-              Student ID
-            </label>
-            <input
-              id="studentId"
-              type="text"
-              placeholder="e.g. 1234567"
-              value={studentId}
-              onChange={(event) => setStudentId(event.target.value)}
-              required
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            />
-          </div>
-
-          {errorMessage && <p className="text-xs text-red-600">{errorMessage}</p>}
-
-          <Button type="submit" className="h-11 w-full" disabled={isSaving}>
-            {isSaving ? "Saving..." : "Continue"}
-          </Button>
-        </form>
       </div>
-    </div>
+    </main>
   );
 }
 

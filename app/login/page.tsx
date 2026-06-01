@@ -16,6 +16,7 @@ function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [suggestSignup, setSuggestSignup] = useState(false);
 
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -51,7 +52,16 @@ function LoginForm() {
       });
 
       if (error) {
-        setErrorMessage(error.message);
+        const isInvalidCredentials =
+          error.message.toLowerCase().includes("invalid login credentials") ||
+          error.message.toLowerCase().includes("invalid email or password") ||
+          error.message.toLowerCase().includes("email not confirmed");
+        setErrorMessage(
+          isInvalidCredentials
+            ? "Incorrect email or password."
+            : error.message,
+        );
+        setSuggestSignup(isInvalidCredentials);
         setIsSubmitting(false);
         return;
       }
@@ -95,6 +105,7 @@ function LoginForm() {
   function selectMode(nextMode: AuthMode) {
     setMode(nextMode);
     setErrorMessage(null);
+    setSuggestSignup(false);
   }
 
   return (
@@ -141,12 +152,12 @@ function LoginForm() {
                 ? "Access your queues and printer status."
                 : "Set up access, then complete your lab profile."}
             </p>
-            <p className="pt-1 text-xs text-muted-foreground">
-              {mode === "signin" ? "New here?" : "Already have an account?"}{" "}
+            <p className="pt-1 text-sm text-muted-foreground">
+              {mode === "signin" ? "New to GIX Printer Hub?" : "Already have an account?"}{" "}
               <button
                 type="button"
                 onClick={() => selectMode(mode === "signin" ? "signup" : "signin")}
-                className="font-medium text-foreground underline-offset-4 hover:underline"
+                className="font-semibold text-foreground underline underline-offset-4 hover:text-foreground/80"
               >
                 {mode === "signin" ? "Create an account" : "Sign in"}
               </button>
@@ -221,7 +232,23 @@ function LoginForm() {
             </div>
           )}
 
-          {errorMessage && <p className="text-xs text-red-600">{errorMessage}</p>}
+          {errorMessage && (
+            <div className="space-y-1">
+              <p className="text-xs text-red-600">{errorMessage}</p>
+              {suggestSignup && (
+                <p className="text-xs text-muted-foreground">
+                  Don&apos;t have an account?{" "}
+                  <button
+                    type="button"
+                    onClick={() => selectMode("signup")}
+                    className="font-medium text-foreground underline-offset-4 hover:underline"
+                  >
+                    Create one here
+                  </button>
+                </p>
+              )}
+            </div>
+          )}
 
           <Button type="submit" className="h-11 w-full" disabled={isSubmitting}>
             {isSubmitting ? "Please wait..." : mode === "signin" ? "Sign in" : "Create account"}
