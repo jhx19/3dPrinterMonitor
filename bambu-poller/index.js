@@ -258,7 +258,7 @@ async function updatePrinter(printer, printPayload) {
   }
 
   console.log(
-    `[${printer.name}] ${status}  ${timeRemaining ?? "?"}m remaining${errorCode ? `  error=${errorCode}` : ""}`,
+    `[${printer.name}] ${status} (gcode=${printPayload.gcode_state})  ${timeRemaining ?? "?"}m remaining${errorCode ? `  error=${errorCode}` : ""}`,
   );
 
   await handleTransition(printer, status);
