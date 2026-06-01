@@ -309,9 +309,11 @@ export function PrinterDashboard() {
     if (!userId) return [];
     return printers.filter((p) => {
       const waiters = waitersByPrinter.get(p.id) ?? [];
-      const isQueueHead = waiters[0]?.userId === userId;
+      const head = waiters[0];
+      const isQueueHead = head?.userId === userId;
+      const wasNotified = !!head?.notifiedAt;
       const isActiveUser = p.activeUserId === userId;
-      return p.status === "printing" && !p.activeUserId && isQueueHead && !isActiveUser;
+      return p.status === "printing" && !p.activeUserId && isQueueHead && wasNotified && !isActiveUser;
     });
   }, [printers, waitersByPrinter, userId]);
 
