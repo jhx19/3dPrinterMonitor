@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
@@ -169,6 +169,7 @@ export function PrinterDashboard() {
   const [leavingIds, setLeavingIds] = useState<Record<string, boolean>>({});
   const [actionErrors, setActionErrors] = useState<Record<string, string | null>>({});
   const [dismissedClaimPrinters, setDismissedClaimPrinters] = useState<Set<string>>(new Set());
+  const loadDataTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadData = useCallback(async () => {
     if (!supabase) return;
@@ -255,6 +256,13 @@ export function PrinterDashboard() {
     return () => subscription.unsubscribe();
   }, [supabase, loadData]);
 
+  // Debounced loadData: batches rapid realtime events (4 printers × every ~5s)
+  // into a single fetch 300ms after the last event, preventing stale-read races.
+  const scheduleLoadData = useCallback(() => {
+    if (loadDataTimer.current) clearTimeout(loadDataTimer.current);
+    loadDataTimer.current = setTimeout(() => void loadData(), 300);
+  }, [loadData]);
+
   useEffect(() => {
     if (!supabase) return;
 
@@ -263,14 +271,14 @@ export function PrinterDashboard() {
     const printerChannel = supabase
       .channel("printers-realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "printers" }, () => {
-        void loadData();
+        scheduleLoadData();
       })
       .subscribe();
 
     const queueChannel = supabase
       .channel("queues-realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "queues" }, () => {
-        void loadData();
+        scheduleLoadData();
       })
       .subscribe();
 
