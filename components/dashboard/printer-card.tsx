@@ -58,12 +58,14 @@ export interface PrinterCardProps {
   isActiveUser: boolean;
   isJoiningQueue: boolean;
   isLeavingQueue: boolean;
+  isClaiming: boolean;
   alreadyInQueue: boolean;
   isBanned: boolean;
   actionError: string | null;
   queueLimit: number;
   onJoinQueue: () => Promise<void>;
   onLeaveQueue: () => Promise<void>;
+  onClaim: () => Promise<void>;
 }
 
 const statusConfig: Record<
@@ -109,16 +111,27 @@ export function PrinterCard({
   errorMessage,
   isJoiningQueue,
   isLeavingQueue,
+  isClaiming,
   alreadyInQueue,
   isBanned,
   actionError,
   queueLimit,
   onJoinQueue,
   onLeaveQueue,
+  onClaim,
 }: PrinterCardProps) {
   const config = statusConfig[status];
   const slot1 = waiters[0] ?? null;
   const queueFull = waiters.length >= queueLimit;
+
+  // While a printer is printing and nobody has claimed it, anyone in the queue can
+  // press "It's me" to claim it — the button is the only signal of who actually
+  // started the print. The notified head goes through the popup modal instead, so
+  // exclude them here to avoid showing both.
+  const claimViaModal =
+    status === "printing" && slot1?.userId === currentUserId && slot1?.notifiedAt != null;
+  const showClaimButton =
+    status === "printing" && !activeUserName && alreadyInQueue && !isActiveUser && !claimViaModal;
 
   // A claim window is open whenever the printer is idle and the head has been notified.
   // This is visible to everyone, not just the head themselves.
@@ -296,6 +309,17 @@ export function PrinterCard({
                   Go start your print. Once it&apos;s running, come back and confirm.
                 </p>
               </div>
+              {leaveButton}
+            </div>
+          ) : showClaimButton ? (
+            <div className="space-y-2">
+              <Button
+                className="h-11 w-full"
+                onClick={() => void onClaim()}
+                disabled={isClaiming}
+              >
+                {isClaiming ? "Confirming…" : "It's me"}
+              </Button>
               {leaveButton}
             </div>
           ) : alreadyInQueue ? (

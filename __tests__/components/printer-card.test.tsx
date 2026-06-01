@@ -16,12 +16,14 @@ const baseProps = {
   isActiveUser: false,
   isJoiningQueue: false,
   isLeavingQueue: false,
+  isClaiming: false,
   alreadyInQueue: false,
   isBanned: false,
   actionError: null,
   queueLimit: 3,
   onJoinQueue: vi.fn().mockResolvedValue(undefined),
   onLeaveQueue: vi.fn().mockResolvedValue(undefined),
+  onClaim: vi.fn().mockResolvedValue(undefined),
 };
 
 describe("PrinterCard", () => {

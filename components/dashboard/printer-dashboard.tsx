@@ -173,6 +173,7 @@ export function PrinterDashboard() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [joiningIds, setJoiningIds] = useState<Record<string, boolean>>({});
   const [leavingIds, setLeavingIds] = useState<Record<string, boolean>>({});
+  const [startingIds, setStartingIds] = useState<Record<string, boolean>>({});
   const [actionErrors, setActionErrors] = useState<Record<string, string | null>>({});
   const [dismissedClaimPrinters, setDismissedClaimPrinters] = useState<Set<string>>(new Set());
   const loadDataTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -442,9 +443,11 @@ export function PrinterDashboard() {
       }
       if (currentUser === "loading" || !currentUser) return;
       if (!supabase) return;
+      setStartingIds((prev) => ({ ...prev, [printer.id]: true }));
       setActionErrors((prev) => ({ ...prev, [printer.id]: null }));
       const { error } = await supabase.rpc("claim_printer", { p_printer_id: printer.id });
       if (error) setActionErrors((prev) => ({ ...prev, [printer.id]: error.message }));
+      setStartingIds((prev) => ({ ...prev, [printer.id]: false }));
     },
     [supabase, currentUser, isPreviewMode],
   );
@@ -522,12 +525,14 @@ export function PrinterDashboard() {
       isActiveUser,
       isJoiningQueue: Boolean(joiningIds[printer.id]),
       isLeavingQueue: Boolean(leavingIds[printer.id]),
+      isClaiming: Boolean(startingIds[printer.id]),
       alreadyInQueue,
       isBanned,
       actionError: actionErrors[printer.id] ?? null,
       queueLimit: QUEUE_LIMIT,
       onJoinQueue: async () => joinQueue(printer),
       onLeaveQueue: async () => leaveQueue(printer),
+      onClaim: async () => confirmStart(printer),
     };
   });
 
