@@ -40,9 +40,9 @@ describe("formatTime", () => {
     expect(formatTime(NaN)).toBe("—");
   });
 
-  it('returns "Ready" for 0 or negative', () => {
-    expect(formatTime(0)).toBe("Ready");
-    expect(formatTime(-5)).toBe("Ready");
+  it('returns "0m" for 0 or negative', () => {
+    expect(formatTime(0)).toBe("0m");
+    expect(formatTime(-5)).toBe("0m");
   });
 
   it("formats minutes only when under 1 hour", () => {
