@@ -529,7 +529,7 @@ export function PrinterDashboard() {
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-    <div className="grid gap-6 lg:grid-cols-[minmax(220px,0.65fr)_minmax(0,2fr)] lg:items-start">
+    <div className="grid gap-6 lg:grid-cols-[minmax(210px,0.58fr)_minmax(0,2.1fr)] lg:items-start">
       <section className="min-w-0 space-y-4">
         <div>
           <h1 className="text-balance text-3xl font-semibold leading-tight sm:text-4xl">
