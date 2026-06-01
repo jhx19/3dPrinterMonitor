@@ -256,19 +256,17 @@ export function PrinterCard({
                       : "border-border"
                   }`}
                 >
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-bold text-muted-foreground">
+                  <span className={`flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-muted-foreground ${w.userId === currentUserId ? "bg-white" : "bg-muted"}`}>
                     {i + 1}
                   </span>
-                  <span className="flex-1 min-w-0 flex items-center gap-1.5 truncate">
-                    <span className="truncate">
-                      {w.userId === currentUserId ? "You" : w.displayName}
-                    </span>
-                    {i === 0 && headHasWindow && remainingMs !== null && (
-                      <span className="shrink-0 font-mono tabular-nums text-amber-600 font-semibold">
-                        {formatCountdown(remainingMs)}
-                      </span>
-                    )}
+                  <span className="flex-1 min-w-0 truncate">
+                    {w.userId === currentUserId ? "You" : w.displayName}
                   </span>
+                  {i === 0 && headHasWindow && remainingMs !== null && (
+                    <span className="ml-auto shrink-0 font-mono tabular-nums text-amber-600 font-semibold">
+                      {formatCountdown(remainingMs)}
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>
