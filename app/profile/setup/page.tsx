@@ -86,7 +86,7 @@ function ProfileSetupForm() {
               className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium"
             >
               <Printer className="size-4" />
-              GIX Printer Hub
+              GIX 3D Printer Hub
             </Link>
             <h1 className="max-w-xl text-balance text-xl font-semibold leading-tight text-foreground sm:text-4xl">
               One more step before you join the waitlist.

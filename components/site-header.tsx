@@ -59,7 +59,7 @@ export function SiteHeader() {
           className="inline-flex h-10 items-center gap-2 rounded-full bg-background px-3 text-sm font-semibold shadow-xs"
         >
           <Printer className="size-4 text-amber-600" />
-          <span>Printer Hub</span>
+          <span>3D Printer Hub</span>
         </Link>
 
         <div className="flex items-center gap-2">

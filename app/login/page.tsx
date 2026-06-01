@@ -115,7 +115,7 @@ function LoginForm() {
           <div className="space-y-2 sm:space-y-3">
             <div className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium">
               <Printer className="size-4" />
-              GIX Printer Hub
+              GIX 3D Printer Hub
             </div>
             <h1 className="max-w-xl text-balance text-xl font-semibold leading-tight text-foreground sm:text-4xl">
               Check printer availability before walking to the lab.
@@ -153,7 +153,7 @@ function LoginForm() {
                 : "Set up access, then complete your lab profile."}
             </p>
             <p className="pt-1 text-sm text-muted-foreground">
-              {mode === "signin" ? "New to GIX Printer Hub?" : "Already have an account?"}{" "}
+              {mode === "signin" ? "New to GIX 3D Printer Hub?" : "Already have an account?"}{" "}
               <button
                 type="button"
                 onClick={() => selectMode(mode === "signin" ? "signup" : "signin")}

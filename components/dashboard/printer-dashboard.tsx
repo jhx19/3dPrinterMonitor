@@ -524,7 +524,7 @@ export function PrinterDashboard() {
       <section className="min-w-0 space-y-4">
         <div>
           <h1 className="text-balance text-3xl font-semibold leading-tight sm:text-4xl">
-            Printer Status
+            3D Printer Status
           </h1>
           <p className="mt-2 text-pretty text-sm text-muted-foreground">
             Live availability and notification waitlist.
