@@ -11,6 +11,7 @@ const baseProps = {
   showStaleWarning: true,
   waiters: [],
   currentUserId: null,
+  errorMessage: null,
   activeUserName: null,
   isActiveUser: false,
   isJoiningQueue: false,

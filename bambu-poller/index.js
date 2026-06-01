@@ -95,6 +95,29 @@ function errorCodeFromPayload(print) {
   return null;
 }
 
+function errorMessageFromPayload(print) {
+  const hms = Array.isArray(print.hms) ? print.hms : [];
+  if (hms.length > 0 && hms[0]) {
+    const attr = typeof hms[0].attr === "number" ? hms[0].attr : 0;
+    const module = (attr >>> 16) & 0xFFFF;
+    if (module === 0x0500) return "AMS issue";
+    if (module === 0x0700) return "Extruder issue";
+    if (module === 0x0800) return "Nozzle issue";
+    if (module === 0x0900) return "Heated bed issue";
+    if (module === 0x0300) return "Motion system issue";
+    return "Hardware issue";
+  }
+  const printError = print.print_error;
+  if (typeof printError === "number" && printError !== 0) {
+    if ((printError >>> 16) === 0x0300) return "Filament issue";
+    return "Print error";
+  }
+  const gcodeState = (print.gcode_state ?? "").toUpperCase();
+  if (gcodeState === "FAILED") return "Print failed";
+  if (gcodeState === "PAUSE") return "Print paused";
+  return null;
+}
+
 async function getQueue(printerId) {
   const { data, error } = await supabase
     .from("queues")
@@ -256,10 +279,11 @@ async function updatePrinter(printer, printPayload) {
   const timeRemaining =
     typeof printPayload.mc_remaining_time === "number" ? printPayload.mc_remaining_time : null;
   const errorCode = status === "error" ? errorCodeFromPayload(printPayload) : null;
+  const errorMessage = status === "error" ? errorMessageFromPayload(printPayload) : null;
 
   const { error } = await supabase
     .from("printers")
-    .update({ status, time_remaining: timeRemaining, error_code: errorCode, updated_at: new Date().toISOString() })
+    .update({ status, time_remaining: timeRemaining, error_code: errorCode, error_message: errorMessage, updated_at: new Date().toISOString() })
     .eq("id", printer.supabaseId);
 
   if (error) {

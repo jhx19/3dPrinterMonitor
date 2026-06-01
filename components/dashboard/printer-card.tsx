@@ -51,6 +51,7 @@ export interface PrinterCardProps {
   showStaleWarning: boolean;
   waiters: QueueWaiter[];
   currentUserId: string | null;
+  errorMessage: string | null;
   /** Name of the person currently printing (claimed via "I've Started"), if any. */
   activeUserName: string | null;
   /** True when the current user is the one printing. */
@@ -105,6 +106,7 @@ export function PrinterCard({
   currentUserId,
   activeUserName,
   isActiveUser,
+  errorMessage,
   isJoiningQueue,
   isLeavingQueue,
   alreadyInQueue,
@@ -160,7 +162,7 @@ export function PrinterCard({
           : "In use";
   const primaryDetail =
     status === "error"
-      ? "Check the printer in the makerspace"
+      ? (errorMessage ?? "Check the printer in the makerspace")
       : status === "idle"
         ? waiters.length === 0
           ? "No one is waiting"

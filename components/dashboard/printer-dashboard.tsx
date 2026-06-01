@@ -40,6 +40,7 @@ interface PrinterViewModel {
   name: string;
   status: PrinterStatus;
   timeRemainingMinutes: number | null;
+  errorMessage: string | null;
   activeUserId: string | null;
   updatedAt: string | null;
 }
@@ -53,6 +54,7 @@ const mockPrinters: PrinterViewModel[] = [
     name: "MOREL",
     status: "idle",
     timeRemainingMinutes: null,
+    errorMessage: null,
     activeUserId: null,
     updatedAt: MOCK_NOW,
   },
@@ -61,6 +63,7 @@ const mockPrinters: PrinterViewModel[] = [
     name: "TURKEY TAIL",
     status: "printing",
     timeRemainingMinutes: 47,
+    errorMessage: null,
     activeUserId: null,
     updatedAt: "2026-05-28T02:14:00.000Z",
   },
@@ -69,6 +72,7 @@ const mockPrinters: PrinterViewModel[] = [
     name: "FLY AGARIC",
     status: "error",
     timeRemainingMinutes: null,
+    errorMessage: "Filament issue",
     activeUserId: null,
     updatedAt: "2026-05-28T02:11:00.000Z",
   },
@@ -77,6 +81,7 @@ const mockPrinters: PrinterViewModel[] = [
     name: "SHIITAKE",
     status: "idle",
     timeRemainingMinutes: null,
+    errorMessage: null,
     activeUserId: null,
     updatedAt: "2026-05-28T02:14:30.000Z",
   },
@@ -195,6 +200,7 @@ export function PrinterDashboard() {
         name: row.name,
         status: normalizeStatus(row.status),
         timeRemainingMinutes: row.time_remaining,
+        errorMessage: row.error_message ?? null,
         activeUserId: row.active_user_id,
         updatedAt: row.updated_at,
       })),
@@ -473,6 +479,7 @@ export function PrinterDashboard() {
       printerName: printer.name,
       status: printer.status,
       timeRemainingMinutes: printer.timeRemainingMinutes,
+      errorMessage: printer.errorMessage,
       updatedAt: printer.updatedAt,
       showStaleWarning: !isPreviewMode,
       waiters,

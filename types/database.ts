@@ -11,6 +11,7 @@ export interface Database {
           time_remaining: number | null;
           filament_level: number | null;
           error_code: string | null;
+          error_message: string | null;
           active_user_id: string | null;
           updated_at: string | null;
           [key: string]: unknown;
@@ -22,6 +23,7 @@ export interface Database {
           time_remaining?: number | null;
           filament_level?: number | null;
           error_code?: string | null;
+          error_message?: string | null;
           active_user_id?: string | null;
           updated_at?: string | null;
           [key: string]: unknown;
@@ -33,6 +35,7 @@ export interface Database {
           time_remaining?: number | null;
           filament_level?: number | null;
           error_code?: string | null;
+          error_message?: string | null;
           active_user_id?: string | null;
           updated_at?: string | null;
           [key: string]: unknown;
