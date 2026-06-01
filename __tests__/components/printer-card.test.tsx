@@ -158,7 +158,7 @@ describe("PrinterCard", () => {
         currentUserId="user-123"
       />,
     );
-    expect(screen.getByText(/done around/i)).toBeInTheDocument();
+    expect(screen.getByText(/ends at/i)).toBeInTheDocument();
   });
 
   it("does not show estimated completion time when idle", () => {
