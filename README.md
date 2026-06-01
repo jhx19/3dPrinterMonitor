@@ -19,7 +19,7 @@ A live dashboard and notification-assisted waitlist that:
 - Shows the real-time status (available, in use, error) and remaining print time for all 4 printers
 - Lets students sign in and join a per-printer queue from anywhere
 - Notifies the next student by email when a printer becomes free
-- Gives the head of the queue a 10-minute window to go start their print
+- Gives the head of the queue a 5-minute window to go start their print
 - Lets any queue member confirm they started once the printer is printing
 - Handles no-shows, promotes the next person, and records missed turns for TA reference
 
@@ -54,7 +54,7 @@ The system is a **soft coordination tool, not an access-control gate**. Printers
 | Check-in | Date | Required Progress | Status |
 |----------|------|-------------------|--------|
 | Check-in 1 | April 20, 2026 | Architecture PR submitted. Bambu API connected. Basic dashboard UI. Auth working. | Partial. Dashboard, queue structure, Realtime, auth, and profile setup all implemented. Bambu poller requires real LAN access. Issues: [#2](../../issues/2), [#3](../../issues/3), [#4](../../issues/4), [#13](../../issues/13), [#14](../../issues/14). |
-| Check-in 2 | May 4, 2026 | Queue fully functional. Notifications firing. No-show detection and strike recording working. | Complete. Queue with 3-person cap, 10-min countdown, claim flow, and email notifications via Supabase Edge Function all implemented. Issues: [#5](../../issues/5), [#6](../../issues/6), [#7](../../issues/7). |
+| Check-in 2 | May 4, 2026 | Queue fully functional. Notifications firing. No-show detection and strike recording working. | Complete. Queue with 3-person cap, 5-min countdown, claim flow, and email notifications via Supabase Edge Function all implemented. Issues: [#5](../../issues/5), [#6](../../issues/6), [#7](../../issues/7). |
 | Check-in 3 | May 18, 2026 | TA admin panel complete. Penalty management working. All Must-have issues closed. | Partial. Schema includes TA roles, strikes, and no-show records. Admin page UI not implemented. Issue: [#8](../../issues/8). |
 | Final Delivery | June 1, 2026 | All features complete and tested. App deployed and demo-ready. | Complete. Dashboard, auth, queue, poller, and notifications fully functional and deployed. TA admin UI out of scope for final. Issues: [#8](../../issues/8). |
 
@@ -89,7 +89,7 @@ The queue is a notification-assisted waitlist, not a reservation lock.
 - Active user display next to remaining time once someone claims the print
 - Email notifications via Supabase Edge Function:
   - "It's your turn" — when printer becomes available after waiting in queue
-  - "Removed from waitlist" — when 10-minute window expires
+  - "Removed from waitlist" — when 5-minute window expires
   - "Print done" — when print finishes
   - "Print error" — when printer errors out
 - No email when joining an already-idle printer with an empty queue (user can see availability directly)
